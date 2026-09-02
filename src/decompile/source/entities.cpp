@@ -41,6 +41,21 @@ namespace decompile
                 || iequals(classname, "func_wall_toggle");
         }
 
+        // source stores feet, goldsrc the hull centre (-VEC_HULL_MIN.z = 36)
+        // not for info_teleport_destination, TeleportTouch subtracts mins.z itself
+        void raise_spawn_to_hull_centre(format::entity &entity)
+        {
+            const char *origin = entity.value("origin");
+            if (origin[0] == '\0')
+                return;
+            double x = 0, y = 0, z = 0;
+            if (std::sscanf(origin, "%lf %lf %lf", &x, &y, &z) != 3)
+                return;
+            char raised[96];
+            std::snprintf(raised, sizeof(raised), "%.6g %.6g %.6g", x, y, z + 36);
+            entity.set("origin", raised);
+        }
+
         bool is_studio_prop(const char *classname)
         {
             return iequals(classname, "prop_dynamic")
@@ -172,12 +187,17 @@ namespace decompile
         // team-specific start and discard the rest: the port only needs one
         // deterministic entry point.
         bool existing_start = false;
+        bool any_ct_spawn = false;
         for (const format::entity &entity : entities)
-            if (iequals(entity.value("classname"), "info_player_start"))
-            {
+        {
+            const char *classname = entity.value("classname");
+            if (iequals(classname, "info_player_start"))
                 existing_start = true;
-                break;
-            }
+            else if (iequals(classname, "info_player_counterterrorist"))
+                any_ct_spawn = true;
+        }
+        // goldsrc's info_player_start is the CT spawn, so prefer a CT donor
+        // a t-only map still has to yield one
         bool start_written = false;
 
         for (format::entity &entity : entities)
@@ -192,17 +212,20 @@ namespace decompile
                     stats.dropped_spawns++;
                     continue;
                 }
+                raise_spawn_to_hull_centre(entity);
                 start_written = true;
             }
             else if (is_source_team_spawn(classname))
             {
-                bool suitable = iequals(classname, "info_player_counterterrorist");
+                bool suitable = !any_ct_spawn
+                             || iequals(classname, "info_player_counterterrorist");
                 if (existing_start || start_written || !suitable)
                 {
                     stats.dropped_spawns++;
                     continue;
                 }
                 entity.set("classname", "info_player_start");
+                raise_spawn_to_hull_centre(entity);
                 start_written = true;
             }
             else if (is_source_brush_entity(classname))

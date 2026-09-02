@@ -79,7 +79,9 @@ suite("unit.decompile.source_entities")
 
         require(entities.size() == 2);
         expect(std::strcmp(entities[1].value("classname"), "info_player_start") == 0);
-        expect(std::strcmp(entities[1].value("origin"), "0 64 16") == 0);
+        // the CT spawn is the donor, and its feet origin rises 36 to the
+        // goldsrc hull centre
+        expect(std::strcmp(entities[1].value("origin"), "0 64 52") == 0);
         expect(stats.dropped_spawns == 2);
         expect(stats.player_start);
     }
@@ -100,7 +102,9 @@ suite("unit.decompile.source_entities")
 
         require(entities.size() == 2);
         expect(std::strcmp(entities[1].value("classname"), "info_player_start") == 0);
-        expect(std::strcmp(entities[1].value("origin"), "16 24 32") == 0);
+        // an info_player_start in a source bsp is still a source spawn, so it
+        // rises too
+        expect(std::strcmp(entities[1].value("origin"), "16 24 68") == 0);
         expect(stats.dropped_spawns == 2);
         expect(stats.player_start);
     }
@@ -173,5 +177,48 @@ suite("unit.decompile.source_entities")
 
         expect(std::strcmp(entities[1].value("_diffuse_light"), "1 2 3 4") == 0);
         expect_false(entities[1].has("_ambient"));
+    }
+    test("the chosen spawn rises to the goldsrc hull centre")
+    {
+        // source puts a spawn origin at the feet, goldsrc at the centre of a
+        // hull whose VEC_HULL_MIN.z is -36, and GetPlayerSpawnSpot only adds
+        // Vector(0,0,1) on top. A teleport destination must NOT move, because
+        // TeleportTouch already subtracts the player's mins.z itself.
+        std::vector<format::entity> entities = {
+            make_entity({{"classname", "worldspawn"}}),
+            make_entity({{"classname", "info_player_counterterrorist"},
+                         {"origin", "-320 480 1"}}),
+            make_entity({{"classname", "info_teleport_destination"},
+                         {"targetname", "1"},
+                         {"origin", "-128 288 1"}}),
+        };
+        decompile::entity_remap_stats stats;
+        decompile::remap_source_entities(entities, stats);
+
+        require(entities.size() == 3);
+        expect(std::strcmp(entities[1].value("classname"), "info_player_start") == 0);
+        expect(std::strcmp(entities[1].value("origin"), "-320 480 37") == 0);
+        expect(std::strcmp(entities[2].value("origin"), "-128 288 1") == 0);
+    }
+
+    test("a map with only terrorist spawns still gets a start")
+    {
+        // preferring the CT spawn is right when the map has both, but it must
+        // not be the only way to get a start: a T-only map was losing every
+        // spawn it had and porting with no entry point.
+        std::vector<format::entity> entities = {
+            make_entity({{"classname", "worldspawn"}}),
+            make_entity({{"classname", "info_player_terrorist"},
+                         {"origin", "-320 480 1"}}),
+            make_entity({{"classname", "info_player_terrorist"},
+                         {"origin", "-294 481 1"}}),
+        };
+        decompile::entity_remap_stats stats;
+        decompile::remap_source_entities(entities, stats);
+
+        require(entities.size() == 2);
+        expect(std::strcmp(entities[1].value("classname"), "info_player_start") == 0);
+        expect(std::strcmp(entities[1].value("origin"), "-320 480 37") == 0);
+        expect(stats.dropped_spawns == 1);
     }
 }
