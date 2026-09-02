@@ -1,6 +1,8 @@
 #include "cmdline.h"
+#include "log.h"
 #include "string_util.h"
 
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 
@@ -216,5 +218,98 @@ namespace cli
     {
         const char *v = value(flag, nullptr);
         return v ? std::atof(v) : def;
+    }
+
+    namespace
+    {
+        // strtol and strtod leave end at the start when nothing converted
+        // a range check alone would accept that as the 0 they also return
+        bool consumed_whole_token(const char *text, const char *end)
+        {
+            return text[0] != '\0' && *end == '\0';
+        }
+    }
+
+    bool option_int(const char *command, const char *option, const char *text,
+                    long min, long max, long step, long &out)
+    {
+        char *end = nullptr;
+        // an overlarge value saturates, which the bounds then reject
+        const long value = std::strtol(text, &end, 10);
+        if (consumed_whole_token(text, end) && value >= min && value <= max
+            && (step <= 0 || value % step == 0))
+        {
+            out = value;
+            return true;
+        }
+        if (step > 0)
+            logging::console("%s: %s expects a multiple of %ld from %ld..%ld\n",
+                             command, option, step, min, max);
+        else
+            logging::console("%s: %s expects %ld..%ld\n", command, option, min, max);
+        return false;
+    }
+
+    bool option_pow2(const char *command, const char *option, const char *text,
+                     long min, long max, bool allow_zero, long &out)
+    {
+        char *end = nullptr;
+        const long value = std::strtol(text, &end, 10);
+        if (consumed_whole_token(text, end)
+            && ((allow_zero && value == 0)
+                || (value >= min && value <= max && (value & (value - 1)) == 0)))
+        {
+            out = value;
+            return true;
+        }
+        logging::console("%s: %s expects %sa power of two from %ld..%ld\n",
+                         command, option, allow_zero ? "0 or " : "", min, max);
+        return false;
+    }
+
+    // "1, 2, 4, or 8"
+    bool option_choice(const char *command, const char *option, const char *text,
+                       std::initializer_list<long> allowed, long &out)
+    {
+        char *end = nullptr;
+        const long value = std::strtol(text, &end, 10);
+        if (consumed_whole_token(text, end))
+        {
+            for (long candidate : allowed)
+                if (candidate == value)
+                {
+                    out = value;
+                    return true;
+                }
+        }
+
+        std::string list;
+        std::size_t index = 0;
+        for (long candidate : allowed)
+        {
+            if (index != 0)
+                list += allowed.size() > 2 ? ", " : " ";
+            if (index + 1 == allowed.size() && allowed.size() > 1)
+                list += "or ";
+            list += std::to_string(candidate);
+            index++;
+        }
+        logging::console("%s: %s expects %s\n", command, option, list.c_str());
+        return false;
+    }
+
+    bool option_float(const char *command, const char *option, const char *text,
+                      double min, double max, double &out)
+    {
+        char *end = nullptr;
+        const double value = std::strtod(text, &end);
+        if (consumed_whole_token(text, end) && std::isfinite(value)
+            && value >= min && value <= max)
+        {
+            out = value;
+            return true;
+        }
+        logging::console("%s: %s expects %g..%g\n", command, option, min, max);
+        return false;
     }
 }

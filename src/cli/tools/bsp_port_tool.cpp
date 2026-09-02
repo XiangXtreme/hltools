@@ -1,11 +1,11 @@
 #include "bsp_port_tool.h"
 
-#include <cmath>
-#include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "../../common/cmdline.h"
 #include "../../common/filesystem.h"
 #include "../../common/limits.h"
 #include "../../common/log.h"
@@ -134,66 +134,54 @@ namespace tools
             return true;
         }
 
-        int run_port(const std::string &bsp_path, const std::string &map_path,
-                     std::string wad_path, const std::vector<std::string> &game_dirs,
-                     const std::string &tool_wad, unsigned sky_size,
-                     double sky_exposure, unsigned max_texture_size,
-                     unsigned lightmap_texture_size, bool auto_flat_textures,
-                     bool light_colour_gamma,
-                     unsigned max_skin_size, int skin_chunk_level,
-                     bool shared_tile_palette, float tile_area_keep,
-                     const std::vector<std::string> &full_size_textures,
-                     bool physics_clips, int displacement_power,
-                     bool displacement_models, double displacement_chunk,
-                     decompile::source_options::collision_scope displacement_clip,
-                     double displacement_merge, bool force)
+        // the porter's own knobs live in source_options, parsed straight into it
+        struct port_args
+        {
+            std::string bsp_path;
+            std::string map_path;
+            std::string wad_path;
+            std::string tool_wad;
+            bool force = false;
+            decompile::source_options options;
+        };
+
+        constexpr const char *command = "bsp port";
+
+        int run_port(port_args args)
         {
             format::source_map_data source;
             std::string error;
-            if (!format::source_bsp_file::load(bsp_path, source, &error))
+            if (!format::source_bsp_file::load(args.bsp_path, source, &error))
             {
                 logging::console("bsp port: %s\n", error.c_str());
                 return 1;
             }
-            if (fs::exists(map_path) && !force)
+            if (fs::exists(args.map_path) && !args.force)
             {
                 logging::console("bsp port: '%s' already exists (use -force)\n",
-                                 map_path.c_str());
+                                 args.map_path.c_str());
                 return 1;
             }
-            if (wad_path.empty())
-                wad_path = fs::with_extension(map_path, ".wad");
+            if (args.wad_path.empty())
+                args.wad_path = fs::with_extension(args.map_path, ".wad");
 
-            decompile::source_options options;
-            options.game_dirs = game_dirs;
-            options.sky_size = sky_size;
-            options.sky_exposure = sky_exposure;
-            options.max_texture_size = max_texture_size;
-            options.lightmap_texture_size = lightmap_texture_size;
-            options.auto_flat_textures = auto_flat_textures;
-            options.light_colour_gamma = light_colour_gamma;
-            options.max_skin_size = max_skin_size;
-            options.skin_chunk_level = skin_chunk_level;
-            options.shared_tile_palette = shared_tile_palette;
-            options.tile_area_keep = tile_area_keep;
-            options.full_size_textures = full_size_textures;
-            options.physics_clips = physics_clips;
-            options.displacement_power = displacement_power;
-            options.displacement_models = displacement_models;
-            options.displacement_chunk = displacement_chunk;
-            options.displacement_clip = displacement_clip;
-            options.displacement_merge = displacement_merge;
+            const std::string &map_path = args.map_path;
+            const std::string &wad_path = args.wad_path;
+            const std::string &tool_wad = args.tool_wad;
+            const bool force = args.force;
+
+            decompile::source_options options = std::move(args.options);
             // terrain models live under models/<map name>/, not the output path
-            std::string map_name = fs::filename(map_path);
+            std::string map_name = fs::filename(args.map_path);
             std::size_t dot = map_name.rfind('.');
             if (dot != std::string::npos)
                 map_name.erase(dot);
             options.map_name = map_name;
             options.additional_wad =
-                stdfs::absolute(stdfs::path(wad_path)).lexically_normal().string();
-            if (!tool_wad.empty())
+                stdfs::absolute(stdfs::path(args.wad_path)).lexically_normal().string();
+            if (!args.tool_wad.empty())
                 options.tool_wad =
-                    stdfs::absolute(stdfs::path(tool_wad)).lexically_normal().string();
+                    stdfs::absolute(stdfs::path(args.tool_wad)).lexically_normal().string();
 
             decompile::source_result result;
             if (!decompile::port_source_map(source, options, result, &error))
@@ -294,59 +282,39 @@ namespace tools
             return argc < 2 ? 1 : 0;
         }
 
-        bool force = false;
-        std::string wad_path;
-        std::vector<std::string> game_dirs;
-        std::string tool_wad;
-        unsigned sky_size = 256;
-        double sky_exposure = 1.0;
-        unsigned max_texture_size = 512;
-        unsigned lightmap_texture_size = 0; // 0 follows max_texture_size
-        bool auto_flat_textures = true;
-        bool light_colour_gamma = true;
-        unsigned max_skin_size = 512;
-        int skin_chunk_level = 1;
-        bool shared_tile_palette = false;
-        float tile_area_keep = 1.0f;
-        std::vector<std::string> full_size_textures;
-        bool physics_clips = false;
-        int displacement_power = 4;
-        bool displacement_models = false;
-        double displacement_chunk = 1024.0;
-        double displacement_merge = 48.0;
-        decompile::source_options::collision_scope displacement_clip =
-            decompile::source_options::collision_scope::all;
+        port_args args;
+        decompile::source_options &options = args.options;
         std::vector<std::string> positional;
         for (int i = 1; i < argc; i++)
         {
             if (str::iequals(argv[i], "-force"))
             {
-                force = true;
+                args.force = true;
                 continue;
             }
             if (str::iequals(argv[i], "-phyclip"))
             {
-                physics_clips = true;
+                options.physics_clips = true;
                 continue;
             }
             if (str::iequals(argv[i], "-sharedpalette"))
             {
-                shared_tile_palette = true;
+                options.shared_tile_palette = true;
                 continue;
             }
             if (str::iequals(argv[i], "-dispmodels"))
             {
-                displacement_models = true;
+                options.displacement_models = true;
                 continue;
             }
             if (str::iequals(argv[i], "-noflattex"))
             {
-                auto_flat_textures = false;
+                options.auto_flat_textures = false;
                 continue;
             }
             if (str::iequals(argv[i], "-nolightgamma"))
             {
-                light_colour_gamma = false;
+                options.light_colour_gamma = false;
                 continue;
             }
             if (str::iequals(argv[i], "-wad") || str::iequals(argv[i], "-toolwad")
@@ -369,135 +337,96 @@ namespace tools
                     logging::console("bsp port: %s requires a value\n", option.c_str());
                     return 1;
                 }
-                if (str::iequals(option.c_str(), "-wad"))
-                    wad_path = argv[i];
-                else if (str::iequals(option.c_str(), "-toolwad"))
-                    tool_wad = argv[i];
-                else if (str::iequals(option.c_str(), "-game"))
-                    game_dirs.emplace_back(argv[i]);
-                else if (str::iequals(option.c_str(), "-fulltex"))
-                    full_size_textures.emplace_back(argv[i]);
-                else if (str::iequals(option.c_str(), "-skysize"))
+                const char *name = option.c_str();
+                const char *text = argv[i];
+                if (str::iequals(name, "-wad"))
+                    args.wad_path = text;
+                else if (str::iequals(name, "-toolwad"))
+                    args.tool_wad = text;
+                else if (str::iequals(name, "-game"))
+                    options.game_dirs.emplace_back(text);
+                else if (str::iequals(name, "-fulltex"))
+                    options.full_size_textures.emplace_back(text);
+                else if (str::iequals(name, "-skysize"))
                 {
-                    char *end = nullptr;
-                    long value = std::strtol(argv[i], &end, 10);
-                    if (!end || *end != '\0' || value < 0 || value > 4096
-                        || (value != 0 && (value < 64 || (value & (value - 1)) != 0)))
-                    {
-                        logging::console("bsp port: -skysize expects 0 or a power of "
-                                         "two from 64..4096\n");
+                    // the exported faces are square mips, and 0 skips them
+                    long value = 0;
+                    if (!cli::option_pow2(command, name, text, 64, 4096, true, value))
                         return 1;
-                    }
-                    sky_size = (unsigned)value;
+                    options.sky_size = (unsigned)value;
                 }
-                else if (str::iequals(option.c_str(), "-maxtexsize"))
+                else if (str::iequals(name, "-skyexposure"))
                 {
-                    char *end = nullptr;
-                    long value = std::strtol(argv[i], &end, 10);
-                    if (!end || *end != '\0' || value < 16 || value > 512
-                        || value % 16 != 0)
-                    {
-                        logging::console("bsp port: -maxtexsize expects a multiple "
-                                         "of 16 from 16..512\n");
+                    double value = 0;
+                    if (!cli::option_float(command, name, text, 0.01, 16.0, value))
                         return 1;
-                    }
-                    max_texture_size = (unsigned)value;
+                    options.sky_exposure = value;
                 }
-                else if (str::iequals(option.c_str(), "-lmtexsize"))
+                else if (str::iequals(name, "-maxtexsize"))
                 {
-                    char *end = nullptr;
-                    long value = std::strtol(argv[i], &end, 10);
-                    if (!end || *end != '\0' || value < 16 || value > 512
-                        || value % 16 != 0)
-                    {
-                        logging::console("bsp port: -lmtexsize expects a multiple "
-                                         "of 16 from 16..512\n");
+                    long value = 0;
+                    if (!cli::option_int(command, name, text, 16, 512, 16, value))
                         return 1;
-                    }
-                    lightmap_texture_size = (unsigned)value;
+                    options.max_texture_size = (unsigned)value;
                 }
-                else if (str::iequals(option.c_str(), "-maxskinsize"))
+                else if (str::iequals(name, "-lmtexsize"))
                 {
-                    char *end = nullptr;
-                    long value = std::strtol(argv[i], &end, 10);
-                    if (!end || *end != '\0' || value < 16 || value > 512
-                        || value % 16 != 0)
-                    {
-                        logging::console("bsp port: -maxskinsize expects a multiple "
-                                         "of 16 from 16..512\n");
+                    long value = 0;
+                    if (!cli::option_int(command, name, text, 16, 512, 16, value))
                         return 1;
-                    }
-                    max_skin_size = (unsigned)value;
+                    options.lightmap_texture_size = (unsigned)value;
                 }
-                else if (str::iequals(option.c_str(), "-chunkskins"))
+                else if (str::iequals(name, "-maxskinsize"))
                 {
-                    char *end = nullptr;
-                    long value = std::strtol(argv[i], &end, 10);
-                    if (!end || *end != '\0'
-                        || (value != 1 && value != 2 && value != 4 && value != 8))
-                    {
-                        logging::console("bsp port: -chunkskins expects 1, 2, 4, or 8\n");
+                    long value = 0;
+                    if (!cli::option_int(command, name, text, 16, 512, 16, value))
                         return 1;
-                    }
-                    skin_chunk_level = (int)value;
+                    options.max_skin_size = (unsigned)value;
                 }
-                else if (str::iequals(option.c_str(), "-tilearea"))
+                else if (str::iequals(name, "-chunkskins"))
                 {
-                    char *end = nullptr;
-                    double value = std::strtod(argv[i], &end);
-                    if (!end || *end != '\0' || value < 10.0 || value > 100.0)
-                    {
-                        logging::console("bsp port: -tilearea expects 10..100\n");
+                    long value = 0;
+                    if (!cli::option_choice(command, name, text, {1, 2, 4, 8}, value))
                         return 1;
-                    }
-                    tile_area_keep = (float)(value / 100.0);
+                    options.skin_chunk_level = (int)value;
                 }
-                else if (str::iequals(option.c_str(), "-disppower"))
+                else if (str::iequals(name, "-tilearea"))
                 {
-                    char *end = nullptr;
-                    long value = std::strtol(argv[i], &end, 10);
-                    if (!end || *end != '\0' || value < 0 || value > 4)
-                    {
-                        logging::console("bsp port: -disppower expects 0..4\n");
+                    double value = 0;
+                    if (!cli::option_float(command, name, text, 10.0, 100.0, value))
                         return 1;
-                    }
-                    displacement_power = (int)value;
+                    options.tile_area_keep = (float)(value / 100.0);
                 }
-                else if (str::iequals(option.c_str(), "-dispchunk"))
+                else if (str::iequals(name, "-disppower"))
                 {
-                    char *end = nullptr;
-                    double value = std::strtod(argv[i], &end);
-                    if (!end || *end != '\0' || !std::isfinite(value)
-                        || value < 128.0 || value > 8192.0)
-                    {
-                        logging::console("bsp port: -dispchunk expects 128..8192\n");
+                    long value = 0;
+                    if (!cli::option_int(command, name, text, 0, 4, 0, value))
                         return 1;
-                    }
-                    displacement_chunk = value;
+                    options.displacement_power = (int)value;
                 }
-                else if (str::iequals(option.c_str(), "-dispmerge"))
+                else if (str::iequals(name, "-dispchunk"))
                 {
-                    char *end = nullptr;
-                    double value = std::strtod(argv[i], &end);
-                    if (!end || *end != '\0' || !std::isfinite(value)
-                        || value < 0.0 || value > 512.0)
-                    {
-                        logging::console("bsp port: -dispmerge expects 0..512\n");
+                    double value = 0;
+                    if (!cli::option_float(command, name, text, 128.0, 8192.0, value))
                         return 1;
-                    }
-                    displacement_merge = value;
+                    options.displacement_chunk = value;
                 }
-                else if (str::iequals(option.c_str(), "-dispclip"))
+                else if (str::iequals(name, "-dispmerge"))
                 {
-                    if (str::iequals(argv[i], "all"))
-                        displacement_clip = decompile::source_options::
-                            collision_scope::all;
-                    else if (str::iequals(argv[i], "floors"))
-                        displacement_clip = decompile::source_options::
-                            collision_scope::floors;
-                    else if (str::iequals(argv[i], "none"))
-                        displacement_clip = decompile::source_options::
-                            collision_scope::none;
+                    double value = 0;
+                    if (!cli::option_float(command, name, text, 0.0, 512.0, value))
+                        return 1;
+                    options.displacement_merge = value;
+                }
+                else if (str::iequals(name, "-dispclip"))
+                {
+                    using scope = decompile::source_options::collision_scope;
+                    if (str::iequals(text, "all"))
+                        options.displacement_clip = scope::all;
+                    else if (str::iequals(text, "floors"))
+                        options.displacement_clip = scope::floors;
+                    else if (str::iequals(text, "none"))
+                        options.displacement_clip = scope::none;
                     else
                     {
                         logging::console("bsp port: -dispclip expects all, floors, "
@@ -507,15 +436,10 @@ namespace tools
                 }
                 else
                 {
-                    char *end = nullptr;
-                    double value = std::strtod(argv[i], &end);
-                    if (!end || *end != '\0' || !std::isfinite(value)
-                        || value < 0.01 || value > 16.0)
-                    {
-                        logging::console("bsp port: -skyexposure expects 0.01..16\n");
-                        return 1;
-                    }
-                    sky_exposure = value;
+                    // the list above and these branches must stay in step
+                    logging::console("bsp port: %s takes a value but is not "
+                                     "handled\n", name);
+                    return 1;
                 }
                 continue;
             }
@@ -533,19 +457,13 @@ namespace tools
             logging::console("bsp port: expected a Source .bsp and .map destination\n");
             return 1;
         }
-        if (!wad_path.empty() && !extension_is(wad_path, ".wad"))
+        if (!args.wad_path.empty() && !extension_is(args.wad_path, ".wad"))
         {
             logging::console("bsp port: companion output must end in .wad\n");
             return 1;
         }
-        return run_port(positional[0], positional[1], wad_path, game_dirs,
-                        tool_wad, sky_size, sky_exposure, max_texture_size,
-                        lightmap_texture_size, auto_flat_textures,
-                        light_colour_gamma,
-                        max_skin_size, skin_chunk_level, shared_tile_palette,
-                        tile_area_keep, full_size_textures, physics_clips,
-                        displacement_power, displacement_models,
-                        displacement_chunk, displacement_clip,
-                        displacement_merge, force);
+        args.bsp_path = positional[0];
+        args.map_path = positional[1];
+        return run_port(std::move(args));
     }
 }

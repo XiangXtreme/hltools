@@ -1,5 +1,6 @@
 #pragma once
 
+#include <initializer_list>
 #include <string>
 #include <vector>
 
@@ -38,6 +39,20 @@ namespace cli
     // number of value tokens consumed by a known option; zero covers boolean
     // switches and unknown names, while callers validate names separately
     int flag_arity(const std::string &flag);
+
+    // for the subcommands that scan argv themselves rather than using args above
+    // on rejection each prints "<command>: <option> expects ..." and returns false
+    //
+    // the value must be the whole token, so an empty one is rejected
+    // step > 0 requires a multiple of it
+    bool option_int(const char *command, const char *option, const char *text,
+                    long min, long max, long step, long &out);
+    bool option_pow2(const char *command, const char *option, const char *text,
+                     long min, long max, bool allow_zero, long &out);
+    bool option_choice(const char *command, const char *option, const char *text,
+                       std::initializer_list<long> allowed, long &out);
+    bool option_float(const char *command, const char *option, const char *text,
+                      double min, double max, double &out);
 
     class args
     {

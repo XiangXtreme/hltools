@@ -1,12 +1,11 @@
 #include "model_tool.h"
 
 #include <array>
-#include <cmath>
-#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <vector>
 
+#include "common/cmdline.h"
 #include "common/filesystem.h"
 #include "common/log.h"
 #include "common/string_util.h"
@@ -138,45 +137,30 @@ namespace tools
                                          option.c_str());
                         return 1;
                     }
-                    if (str::iequals(option.c_str(), "-maxskinsize"))
+                    const char *command = "model convert";
+                    const char *name = option.c_str();
+                    if (str::iequals(name, "-maxskinsize"))
                     {
-                        char *end = nullptr;
-                        long value = std::strtol(argv[i], &end, 10);
-                        if (!end || *end != '\0' || value < 16 || value > 512
-                            || value % 16 != 0)
-                        {
-                            logging::console(
-                                "model convert: -maxskinsize expects a multiple "
-                                "of 16 from 16..512\n");
+                        long value = 0;
+                        if (!cli::option_int(command, name, argv[i], 16, 512, 16,
+                                             value))
                             return 1;
-                        }
                         max_skin_size = (unsigned)value;
                     }
-                    else if (str::iequals(option.c_str(), "-chunkskins"))
+                    else if (str::iequals(name, "-chunkskins"))
                     {
-                        char *end = nullptr;
-                        long value = std::strtol(argv[i], &end, 10);
-                        if (!end || *end != '\0'
-                            || (value != 1 && value != 2 && value != 4
-                                && value != 8))
-                        {
-                            logging::console(
-                                "model convert: -chunkskins expects 1, 2, 4, or 8\n");
+                        long value = 0;
+                        if (!cli::option_choice(command, name, argv[i],
+                                                {1, 2, 4, 8}, value))
                             return 1;
-                        }
                         skin_chunk_level = (int)value;
                     }
                     else
                     {
-                        char *end = nullptr;
-                        double value = std::strtod(argv[i], &end);
-                        if (!end || *end != '\0' || !std::isfinite(value)
-                            || value < 10.0 || value > 100.0)
-                        {
-                            logging::console(
-                                "model convert: -tilearea expects 10..100\n");
+                        double value = 0;
+                        if (!cli::option_float(command, "-tilearea", argv[i], 10.0,
+                                               100.0, value))
                             return 1;
-                        }
                         tile_area_keep = (float)(value / 100.0);
                     }
                     continue;
@@ -279,14 +263,10 @@ namespace tools
                         logging::console("model skybox: -size requires a world size\n");
                         return 1;
                     }
-                    char *end = nullptr;
-                    double value = std::strtod(argv[i], &end);
-                    if (!end || *end != '\0' || !std::isfinite(value)
-                        || value < 1024 || value > 262144)
-                    {
-                        logging::console("model skybox: -size expects 1024..262144\n");
+                    double value = 0;
+                    if (!cli::option_float("model skybox", "-size", argv[i],
+                                           1024.0, 262144.0, value))
                         return 1;
-                    }
                     options.world_size = (float)value;
                     continue;
                 }
@@ -298,16 +278,10 @@ namespace tools
                             "model skybox: -tile requires a pixel size\n");
                         return 1;
                     }
-                    char *end = nullptr;
-                    long value = std::strtol(argv[i], &end, 10);
-                    if (!end || *end != '\0' || value < 16 || value > 512
-                        || (value & (value - 1)) != 0)
-                    {
-                        logging::console(
-                            "model skybox: -tile expects a power of two from "
-                            "16..512\n");
+                    long value = 0;
+                    if (!cli::option_pow2("model skybox", "-tile", argv[i], 16,
+                                          512, false, value))
                         return 1;
-                    }
                     options.tile_size = (unsigned)value;
                     continue;
                 }
