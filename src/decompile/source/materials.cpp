@@ -128,9 +128,26 @@ namespace decompile
                                 const std::vector<std::string> &selectors)
         {
             std::string candidate = texture_selector(material);
+            // unique_name sanitises and truncates to 15 characters, so a
+            // selector written as the goldsrc name never equals the basename
+            std::string sanitized = candidate;
+            for (char &c : sanitized)
+            {
+                if (!(std::isalnum((unsigned char)c) || c == '_' || c == '+' || c == '-'))
+                    c = '_';
+            }
+            const std::size_t name_limit = (std::size_t)max_goldsrc_texname;
             for (const std::string &selector : selectors)
-                if (candidate == texture_selector(selector))
+            {
+                std::string want = texture_selector(selector);
+                if (want == candidate || want == sanitized)
                     return true;
+                // at goldsrc's name length, a prefix is that name truncated
+                // anything shorter is too loose to match on
+                if (want.size() >= name_limit - 1 && want.size() <= name_limit
+                    && sanitized.compare(0, want.size(), want) == 0)
+                    return true;
+            }
             return false;
         }
 

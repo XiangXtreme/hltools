@@ -239,6 +239,58 @@ suite("unit.decompile.source_materials")
         expect(catalog.textures()[0].height == 64);
     }
 
+    test("material_catalog -fulltex accepts the generated GoldSrc texture name")
+    {
+        std::filesystem::path game =
+            test_support::scratch_directory("source_materials_fulltex_name");
+        std::filesystem::path materials = game / "materials" / "custom";
+        require(fs::make_directory(materials.string()));
+        write_material(materials / "verylongmaterialname.vmt", "LightmappedGeneric");
+        std::vector<byte> vtf = make_rgb_vtf(32, true);
+        require(fs::write_all((materials / "missing.vtf").string(),
+                              vtf.data(), vtf.size()));
+
+        format::source_map_data map;
+        map.material_names = {"custom/verylongmaterialname"};
+
+        // the goldsrc name is the basename truncated to 15 characters, so it is
+        // not equal to the source basename and has to match on its own terms
+        decompile::material_catalog catalog;
+        catalog.build(map, {game.string()}, 16, {"VERYLONGMATERIA"});
+
+        const decompile::resolved_material &material =
+            catalog.resolve("custom/verylongmaterialname");
+        require(material.has_texture);
+        expect(material.u_scale == 1.0);
+        require(catalog.textures().size() == 1);
+        expect(catalog.textures()[0].width == 32);
+    }
+
+    test("material_catalog -fulltex does not match a short prefix")
+    {
+        std::filesystem::path game =
+            test_support::scratch_directory("source_materials_fulltex_prefix");
+        std::filesystem::path materials = game / "materials" / "custom";
+        require(fs::make_directory(materials.string()));
+        write_material(materials / "verylongmaterialname.vmt", "LightmappedGeneric");
+        std::vector<byte> vtf = make_rgb_vtf(32, true);
+        require(fs::write_all((materials / "missing.vtf").string(),
+                              vtf.data(), vtf.size()));
+
+        format::source_map_data map;
+        map.material_names = {"custom/verylongmaterialname"};
+
+        decompile::material_catalog catalog;
+        catalog.build(map, {game.string()}, 16, {"VERY"});
+
+        const decompile::resolved_material &material =
+            catalog.resolve("custom/verylongmaterialname");
+        require(material.has_texture);
+        expect(material.u_scale == 0.5);
+        require(catalog.textures().size() == 1);
+        expect(catalog.textures()[0].width == 16);
+    }
+
     test("material_catalog preserves additive blending")
     {
         std::filesystem::path game =
