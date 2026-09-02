@@ -25,6 +25,7 @@ namespace bsp
         struct leak_site
         {
             std::string classname;
+            std::string model;   // "*12" for a brush entity, empty for a point one
             math::vec3v origin;
             math::vec3v hole;
             bool hashole = false;
@@ -49,6 +50,7 @@ namespace bsp
             bool leak_any = false;
             int leak_hulls = 0; // bitmask of hulls that leaked
             char leak_entclass[64] = {};
+            char leak_entmodel[16] = {};
             math::vec3v leak_entorigin;
             math::vec3v leak_hole;
             bool leak_hashole = false;
@@ -62,6 +64,13 @@ namespace bsp
         };
 
         fill_state g_fill;
+
+        // csg numbers brush entity models before bsp runs
+        // a point entity has none
+        bool is_brush_entity(const format::entity &ent)
+        {
+            return ent.value("model")[0] == '*';
+        }
 
         void get_origin_key(const format::entity &ent, math::vec3v &out)
         {
@@ -509,6 +518,8 @@ namespace bsp
                     continue;
                 leak_site site;
                 site.classname = ent.value("classname");
+                if (is_brush_entity(ent))
+                    site.model = ent.value("model");
                 site.origin = startpos;
                 site.hole = written;
                 site.hashole = true;
@@ -776,8 +787,12 @@ namespace bsp
             // the first leak owns the pointfile
             if (!g_fill.leak_any)
             {
+                const format::entity &leaker = state.entities[(size_t)g_fill.hit_occupied];
                 str::copy(g_fill.leak_entclass, sizeof(g_fill.leak_entclass),
-                          state.entities[(size_t)g_fill.hit_occupied].value("classname"));
+                          leaker.value("classname"));
+                if (is_brush_entity(leaker))
+                    str::copy(g_fill.leak_entmodel, sizeof(g_fill.leak_entmodel),
+                              leaker.value("model"));
                 get_origin_key(state.entities[(size_t)g_fill.hit_occupied], g_fill.leak_entorigin);
                 if (g_fill.haveleaktrail)
                 {
@@ -860,9 +875,10 @@ namespace bsp
                 logging::info("\n    hole %-3zu (%.0f, %.0f, %.0f)\n", index,
                               (double)site.hole[0], (double)site.hole[1],
                               (double)site.hole[2]);
-                logging::info("      from  %s @ (%.0f, %.0f, %.0f)\n",
+                logging::info("      from  %s @ (%.0f, %.0f, %.0f)%s\n",
                               site.classname.c_str(), (double)site.origin[0],
-                              (double)site.origin[1], (double)site.origin[2]);
+                              (double)site.origin[1], (double)site.origin[2],
+                              site.model.empty() ? "" : "   <- brush entity origin");
             }
             logging::info("\n    action  load the pointfile and seal every marked hole\n");
         }
@@ -877,6 +893,10 @@ namespace bsp
                               (double)g_fill.leak_hole[0], (double)g_fill.leak_hole[1],
                               (double)g_fill.leak_hole[2]);
             }
+            if (g_fill.leak_entmodel[0])
+                logging::info(
+                    "    note    that is a brush entity origin, not a position - check it is\n"
+                    "            inside the map before looking for the hole\n");
             logging::info("    action  load the pointfile in your editor and seal the marked hole\n");
             if (!g_fill.sites.empty())
                 logging::info("    note    -allleaks surveyed the map and found only this one\n");
@@ -887,7 +907,11 @@ namespace bsp
             "  The listed entity is where the leak trace starts; trace the pointfile from it to\n"
             "  the marked hole and seal the gap. Unless the entity is accidentally outside the map,\n"
             "  do not delete it. Some rotating-object entities need their origin outside the map;\n"
-            "  enclose such an origin brush in a solid world brush.\n");
+            "  enclose such an origin brush in a solid world brush.\n"
+            "\n"
+            "  A brush entity listed here is a special case: the trace starts at its origin, which\n"
+            "  is the pivot its model is stored relative to and not where its brushes are. Check\n"
+            "  that the origin is inside the map before looking for a hole at all.\n");
 
         logging::set_leaked();
     }
