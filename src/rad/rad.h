@@ -142,8 +142,8 @@ namespace rad
     struct atlas_texture_usage
     {
         std::string name;
-        int faces;
-        long long luxels;
+        int faces = 0;
+        long long luxels = 0;
     };
 
     // how many engine lightmap atlas pages this bsp requires

@@ -170,8 +170,6 @@ namespace rad
                         texindex[texname] = slot;
                         texlmusage entry;
                         entry.name = texname;
-                        entry.faces = 0;
-                        entry.luxels = 0;
                         breakdown->push_back(entry);
                     }
                     else
@@ -192,6 +190,14 @@ namespace rad
                 }
                 blocks = b->next;
                 free(b);
+            }
+            // biggest luxel footprint first: that is the texture a mapper needs
+            // to coarsen, and print_atlas_breakdown relies on the order
+            if (breakdown)
+            {
+                std::sort(breakdown->begin(), breakdown->end(),
+                          [](const texlmusage &a, const texlmusage &b)
+                          { return a.luxels > b.luxels; });
             }
             return numblocks;
         }
@@ -217,12 +223,11 @@ namespace rad
         logging::console("%s  %-20s %9s %12s  %8s\n", indent, "texture", "faces", "luxels", "% budget");
         logging::console("%s  --------------------------------------------------------------\n", indent);
         int total_faces = 0;
-        size_t i;
-        for (i = 0; i < breakdown.size(); i++)
+        for (const atlas_texture_usage &usage : breakdown)
         {
-            total_faces += breakdown[i].faces;
+            total_faces += usage.faces;
         }
-        for (i = 0; i < breakdown.size() && i < show; i++)
+        for (size_t i = 0; i < breakdown.size() && i < show; i++)
         {
             logging::console("%s  %-20s %9d %12lld   %6.1f%%\n", indent, breakdown[i].name.c_str(),
                              breakdown[i].faces, breakdown[i].luxels, pct(breakdown[i].luxels));
@@ -231,7 +236,7 @@ namespace rad
         {
             long long rest_luxels = 0;
             int rest_faces = 0;
-            for (i = show; i < breakdown.size(); i++)
+            for (size_t i = show; i < breakdown.size(); i++)
             {
                 rest_luxels += breakdown[i].luxels;
                 rest_faces += breakdown[i].faces;
@@ -275,9 +280,6 @@ namespace rad
                 logging::add_warning_summary("lightmap atlas approaching the 64 page limit (see the breakdown below)");
             }
 
-            // biggest luxel footprint first: that is what a mapper needs to shrink
-            std::sort(breakdown.begin(), breakdown.end(),
-                      [](const texlmusage &a, const texlmusage &b) { return a.luxels > b.luxels; });
             print_atlas_breakdown(breakdown, total_luxels, "    ");
         }
     }
@@ -286,15 +288,7 @@ namespace rad
                            std::vector<atlas_texture_usage> *breakdown,
                            long long *total_luxels)
     {
-        int blocks = count_blocks(map, breakdown, total_luxels);
-        if (breakdown)
-        {
-            // largest consumer first: that is the one worth coarsening
-            std::sort(breakdown->begin(), breakdown->end(),
-                      [](const atlas_texture_usage &a, const atlas_texture_usage &b)
-                      { return a.luxels > b.luxels; });
-        }
-        return blocks;
+        return count_blocks(map, breakdown, total_luxels);
     }
 
     // early budget check, run before the expensive lighting passes so an

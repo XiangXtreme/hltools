@@ -146,11 +146,10 @@ namespace format
                         break;
                     }
                 }
-                // both sides must stay non-empty
+                // the last colour can be the one that reaches half
+                // only boxes of 2 or more split, so stepping back leaves both filled
                 if (split >= box.end)
                     split = box.end - 1;
-                if (split <= box.start)
-                    split = box.start + 1;
 
                 color_box lo{box.start, split, 0, 0};
                 color_box hi{split, box.end, 0, 0};
