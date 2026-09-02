@@ -397,11 +397,15 @@ namespace decompile
 
                     // the Water shader has no $basetexture (it renders from a
                     // runtime reflection/refraction pass); its editor preview
-                    // image is the closest thing to a paintable water surface
+                    // image is the closest thing to a paintable water surface.
+                    // only fall back to it though: %compilewater also marks the
+                    // LightmappedGeneric fallbacks Source itself uses on old
+                    // hardware, and those carry a real basetexture that is a far
+                    // better water surface than an editor preview or a normal map
                     const std::string &shader = vmt.is_patch() ? base.shader : vmt.shader;
                     water = iequals(shader, "water") || lookup("%compilewater") == "1";
                     rm.unlit = iequals(shader, "UnlitGeneric");
-                    if (water)
+                    if (water && basetexture.empty())
                         basetexture =
                             normalize_material_reference(lookup("%tooltexture"));
                 }
