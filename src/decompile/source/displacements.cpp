@@ -124,7 +124,7 @@ namespace decompile
         bool add_quad(std::vector<source_displacement_triangle> &output,
                       const vec3 &a, const vec3 &b, const vec3 &c, const vec3 &d,
                       const vec3 &base_normal, double minimum_projection,
-                      int texinfo, double tolerance)
+                      int texinfo, double tolerance, bool solid)
         {
             // newell's normal averages the outline rather than trusting 3 corners,
             // so a warped cell splits down the middle rather than hinging
@@ -177,7 +177,7 @@ namespace decompile
             quad.base_normal = base_normal;
             quad.minimum_projection = minimum_projection;
             quad.texinfo = texinfo;
-            quad.solid = false;
+            quad.solid = solid;
             output.push_back(quad);
             return true;
         }
@@ -261,7 +261,7 @@ namespace decompile
             }
 
             auto append_grid =
-                [&](int step, bool solid, double merge_tolerance,
+                [&](int step, bool solid, double tolerance,
                     std::vector<source_displacement_triangle> &output)
             {
                 for (int row = 0; row < side - 1; row += step)
@@ -273,10 +273,10 @@ namespace decompile
                         std::size_t d =
                             a + (std::size_t)step * (std::size_t)side;
                         std::size_t c = d + (std::size_t)step;
-                        if (merge_tolerance > 0
+                        if (tolerance > 0
                             && add_quad(output, grid[a], grid[b], grid[c],
                                         grid[d], normal, minimum_projection,
-                                        face.texinfo, merge_tolerance))
+                                        face.texinfo, tolerance, solid))
                             continue;
                         if ((((row / step) + (column / step)) & 1) == 0)
                         {
