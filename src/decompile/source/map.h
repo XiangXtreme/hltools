@@ -36,6 +36,13 @@ namespace decompile
         // maximum WAD texture dimension. Lower values preserve UV coverage while
         // trading image resolution for fewer BSP subdivisions and lightmap luxels.
         unsigned max_texture_size = 512;
+        // texture size lightmap density is derived from, decoupled from the
+        // stored size, so a texture keeps its pixels and tiles over more world
+        // 0 follows max_texture_size
+        unsigned lightmap_texture_size = 0;
+        // reduce single-colour textures to the minimum legal dimension
+        // they carry no detail, so this is visually identical
+        bool auto_flat_textures = true;
         // Source material names (or generated GoldSrc basenames) that bypass the
         // global cap and retain their native dimensions, up to GoldSrc's 512 limit.
         std::vector<std::string> full_size_textures;
@@ -114,6 +121,8 @@ namespace decompile
         std::size_t converted_materials = 0;
         std::size_t placeholder_materials = 0;
         std::size_t masked_materials = 0; // converted with a '{' transparency mask
+        // single-colour materials reduced to 16x16, dropping their density too
+        std::size_t flattened_materials = 0;
         // UnlitGeneric materials exported through info_unlittextures so RAD
         // gives their faces constant-white fullbright lightmaps.
         std::size_t unlit_materials = 0;

@@ -35,6 +35,12 @@ namespace tools
                 "  -skysize <n>        sky face size, 64..4096; 0 skips (default 256)\n"
                 "  -skyexposure <n>    HDR sky brightness, 0.01..16 (default 1)\n"
                 "  -maxtexsize <n>     WAD texture cap, 16..512 in steps of 16\n"
+                "  -lmtexsize <n>      texture size the lightmap density is\n"
+                "                      derived from, 16..maxtexsize; keeps the\n"
+                "                      pixels while spending fewer luxels\n"
+                "                      (default: follow -maxtexsize)\n"
+                "  -noflattex          keep single-colour materials at full size\n"
+                "                      instead of reducing them to 16x16\n"
                 "  -fulltex <material> bypass the texture cap; repeatable\n"
                 "  -maxskinsize <n>    model skin cap, 16..512 in steps of 16\n"
                 "  -chunkskins <n>     tiles per model-skin axis: 1, 2, 4, or 8\n"
@@ -130,6 +136,7 @@ namespace tools
                      std::string wad_path, const std::vector<std::string> &game_dirs,
                      const std::string &tool_wad, unsigned sky_size,
                      double sky_exposure, unsigned max_texture_size,
+                     unsigned lightmap_texture_size, bool auto_flat_textures,
                      unsigned max_skin_size, int skin_chunk_level,
                      bool shared_tile_palette, float tile_area_keep,
                      const std::vector<std::string> &full_size_textures,
@@ -159,6 +166,8 @@ namespace tools
             options.sky_size = sky_size;
             options.sky_exposure = sky_exposure;
             options.max_texture_size = max_texture_size;
+            options.lightmap_texture_size = lightmap_texture_size;
+            options.auto_flat_textures = auto_flat_textures;
             options.max_skin_size = max_skin_size;
             options.skin_chunk_level = skin_chunk_level;
             options.shared_tile_palette = shared_tile_palette;
@@ -229,6 +238,10 @@ namespace tools
             if (result.unlit_materials != 0)
                 logging::console("preserved %zu unlit materials\n",
                                  result.unlit_materials);
+            if (result.flattened_materials != 0)
+                logging::console("reduced %zu single-colour materials to 16x16 "
+                                 "(no visual change, frees lightmap atlas)\n",
+                                 result.flattened_materials);
             if (!result.skybox.faces.empty())
                 logging::console("wrote gfx/env/%s{bk,dn,ft,lf,rt,up}.tga (%zu/6)\n",
                                  result.skybox.sky_name.c_str(),
@@ -284,6 +297,8 @@ namespace tools
         unsigned sky_size = 256;
         double sky_exposure = 1.0;
         unsigned max_texture_size = 512;
+        unsigned lightmap_texture_size = 0; // 0 follows max_texture_size
+        bool auto_flat_textures = true;
         unsigned max_skin_size = 512;
         int skin_chunk_level = 1;
         bool shared_tile_palette = false;
@@ -319,10 +334,16 @@ namespace tools
                 displacement_models = true;
                 continue;
             }
+            if (str::iequals(argv[i], "-noflattex"))
+            {
+                auto_flat_textures = false;
+                continue;
+            }
             if (str::iequals(argv[i], "-wad") || str::iequals(argv[i], "-toolwad")
                 || str::iequals(argv[i], "-game") || str::iequals(argv[i], "-skysize")
                 || str::iequals(argv[i], "-skyexposure")
                 || str::iequals(argv[i], "-maxtexsize")
+                || str::iequals(argv[i], "-lmtexsize")
                 || str::iequals(argv[i], "-maxskinsize")
                 || str::iequals(argv[i], "-chunkskins")
                 || str::iequals(argv[i], "-tilearea")
@@ -371,6 +392,19 @@ namespace tools
                         return 1;
                     }
                     max_texture_size = (unsigned)value;
+                }
+                else if (str::iequals(option.c_str(), "-lmtexsize"))
+                {
+                    char *end = nullptr;
+                    long value = std::strtol(argv[i], &end, 10);
+                    if (!end || *end != '\0' || value < 16 || value > 512
+                        || value % 16 != 0)
+                    {
+                        logging::console("bsp port: -lmtexsize expects a multiple "
+                                         "of 16 from 16..512\n");
+                        return 1;
+                    }
+                    lightmap_texture_size = (unsigned)value;
                 }
                 else if (str::iequals(option.c_str(), "-maxskinsize"))
                 {
@@ -496,6 +530,7 @@ namespace tools
         }
         return run_port(positional[0], positional[1], wad_path, game_dirs,
                         tool_wad, sky_size, sky_exposure, max_texture_size,
+                        lightmap_texture_size, auto_flat_textures,
                         max_skin_size, skin_chunk_level, shared_tile_palette,
                         tile_area_keep, full_size_textures, physics_clips,
                         displacement_power, displacement_models,

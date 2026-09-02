@@ -989,10 +989,12 @@ namespace decompile
 
         material_catalog catalog;
         catalog.build(map, options.game_dirs, options.max_texture_size,
-                      options.full_size_textures);
+                      options.full_size_textures, options.lightmap_texture_size,
+                      options.auto_flat_textures);
         result.converted_materials = catalog.converted();
         result.placeholder_materials = catalog.placeholders();
         result.masked_materials = catalog.masked();
+        result.flattened_materials = catalog.flattened();
 
         std::vector<format::entity> entities = format::parse_entities(map.entities);
         if (entities.empty())

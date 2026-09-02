@@ -216,6 +216,20 @@ namespace decompile
             return d - (d % goldsrc_min_dim);
         }
 
+        // true when every texel resolved to the same colour. Exact equality
+        // rather than a tolerance keeps the reduction provably invisible.
+        bool is_single_colour(const std::vector<byte> &rgb)
+        {
+            if (rgb.size() < 3)
+                return false;
+            for (std::size_t i = 3; i + 2 < rgb.size(); i += 3)
+            {
+                if (rgb[i] != rgb[0] || rgb[i + 1] != rgb[1] || rgb[i + 2] != rgb[2])
+                    return false;
+            }
+            return true;
+        }
+
         // opacity below which a masked texel is punched out
         constexpr byte mask_threshold = 128;
 
@@ -289,10 +303,20 @@ namespace decompile
     void material_catalog::build(const format::source_map_data &map,
                                  const std::vector<std::string> &game_dirs,
                                  unsigned max_texture_size,
-                                 const std::vector<std::string> &full_size_textures)
+                                 const std::vector<std::string> &full_size_textures,
+                                 unsigned lightmap_texture_size,
+                                 bool auto_flat)
     {
         max_texture_size =
             std::max(goldsrc_min_dim, std::min(goldsrc_max_dim, max_texture_size));
+        // 0 keeps density welded to the stored size - including for -fulltex
+        // materials, whose whole point is to keep their native scale. Any
+        // explicit value is a one-sided cap applied to every material.
+        if (lightmap_texture_size != 0)
+        {
+            lightmap_texture_size = std::max(goldsrc_min_dim,
+                                             std::min(max_texture_size, lightmap_texture_size));
+        }
         format::pakfile pak;
         pak.open(map.pakfile);
         std::vector<format::vpk_archive> vpks = open_game_vpks(game_dirs);
@@ -368,9 +392,8 @@ namespace decompile
 
             format::vtf_image image;
             bool decoded = false;
-            unsigned material_max_size =
-                preserve_full_size(material, full_size_textures)
-                ? goldsrc_max_dim : max_texture_size;
+            bool full_size = preserve_full_size(material, full_size_textures);
+            unsigned material_max_size = full_size ? goldsrc_max_dim : max_texture_size;
             if (!basetexture.empty())
             {
                 std::vector<byte> vtf_bytes;
@@ -415,6 +438,36 @@ namespace decompile
                     && (alphatest_value == "1"
                         || (translucent_value == "1" && alpha_carries_shape(alpha)));
 
+                // unset, density tracks gw exactly and the default port is
+                // unchanged
+                unsigned lw = gw;
+                unsigned lh = gh;
+                if (lightmap_texture_size != 0)
+                {
+                    lw = fit_dim(image.width, lightmap_texture_size);
+                    lh = fit_dim(image.height, lightmap_texture_size);
+                }
+
+                // a masked material is excluded even when its rgb is flat: the
+                // cutout shape is the detail, and it lives in the alpha channel.
+                // -fulltex outranks the reduction; -lmtexsize still applies,
+                // since after the split it governs density rather than pixels.
+                bool flat = auto_flat && !full_size && !masked && !water
+                    && is_single_colour(rgb);
+                if (flat)
+                {
+                    gw = gh = lw = lh = flat_texture_dim;
+                    const byte colour[3] = {rgb[0], rgb[1], rgb[2]};
+                    rgb.assign((std::size_t)gw * (std::size_t)gh * 3, 0);
+                    for (std::size_t i = 0; i + 2 < rgb.size(); i += 3)
+                    {
+                        rgb[i] = colour[0];
+                        rgb[i + 1] = colour[1];
+                        rgb[i + 2] = colour[2];
+                    }
+                    alpha.clear();
+                }
+
                 format::indexed_image indexed;
                 format::mip_texture texture;
                 std::string name =
@@ -427,9 +480,16 @@ namespace decompile
                 {
                     rm.name = name;
                     rm.has_texture = true;
-                    rm.u_scale = (double)gw / (double)image.full_width;
-                    rm.v_scale = (double)gh / (double)image.full_height;
+                    // lw/lh, not the stored gw/gh, is what decouples atlas cost
+                    // from image detail
+                    rm.u_scale = (double)lw / (double)image.full_width;
+                    rm.v_scale = (double)lh / (double)image.full_height;
                     rm.water = water;
+                    rm.flat = flat;
+                    if (flat)
+                    {
+                        flattened_++;
+                    }
                     if (water)
                     {
                         // goldsrc water opacity comes from the func_water entity,

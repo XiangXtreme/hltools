@@ -46,6 +46,9 @@ namespace decompile
         // The map exporter records this separately so RAD can omit lightmaps
         // from every face using the converted GoldSrc texture.
         bool unlit = false;
+        // resolved to 1 colour, so it was reduced to the minimum dimension
+        // recorded for the port report, since it moves the lightmap budget
+        bool flat = false;
     };
 
     // resolves every material referenced by a source map into goldsrc textures.
@@ -57,9 +60,13 @@ namespace decompile
     public:
         // builds the catalog. never fails hard: individual materials that cannot
         // be resolved fall back to placeholders and are counted.
+        // lightmap_texture_size and auto_flat are the source_options fields of
+        // the same name
         void build(const format::source_map_data &map, const std::vector<std::string> &game_dirs,
                    unsigned max_texture_size = 512,
-                   const std::vector<std::string> &full_size_textures = {});
+                   const std::vector<std::string> &full_size_textures = {},
+                   unsigned lightmap_texture_size = 0,
+                   bool auto_flat = true);
 
         const resolved_material &resolve(const std::string &material) const;
 
@@ -68,6 +75,8 @@ namespace decompile
         std::size_t placeholders() const { return placeholders_; }
         // converted textures that carry a '{' transparency mask
         std::size_t masked() const { return masked_; }
+        // materials reduced to the minimum dimension for being a single colour
+        std::size_t flattened() const { return flattened_; }
 
     private:
         std::string unique_name(const std::string &material, const char *prefix = "");
@@ -79,5 +88,6 @@ namespace decompile
         std::size_t converted_ = 0;
         std::size_t placeholders_ = 0;
         std::size_t masked_ = 0;
+        std::size_t flattened_ = 0;
     };
 }

@@ -562,7 +562,9 @@ Options:
 | `-skysize <n>` | Set sky-face size (`64..4096`); `0` skips export | `256` |
 | `-skyexposure <n>` | Scale HDR sky brightness | `1.0` |
 | `-maxtexsize <n>` | Cap WAD textures (`16..512`, step 16) | `512` |
+| `-lmtexsize <n>` | Derive lightmap density from this size instead (`16..512`, step 16) | Follows `-maxtexsize` |
 | `-fulltex <material>` | Bypass `-maxtexsize`; repeatable | None |
+| `-noflattex` | Keep single-colour materials at full size | Off (they become 16x16) |
 | `-maxskinsize <n>` | Cap model skins (`16..512`, step 16) | `512` |
 | `-chunkskins <n>` | Split model skins into `1`, `2`, `4`, or `8` tiles per axis | `1` (off) |
 | `-sharedpalette` | Share one palette across material tiles | Off |
@@ -579,6 +581,36 @@ Skin tiling avoids downscaling large model skins. Lower `-chunkskins` or
 
 `-phyclip` converts prop collision into brushes. Complex collision can exceed
 GoldSrc's 32,767 clipnode limit.
+
+#### Texture size and lightmap density
+
+GoldSrc ties lightmap resolution to texture scale: one luxel per 16 texels, so
+a texture's atlas cost grows with the square of its texel density. A Source map
+tiling a 256px texture every 64 units sits at 4 texels/unit, four times the
+density Source itself lit the map at, which is why a naive port routinely needs
+several times the 64-page atlas it is allowed.
+
+`-maxtexsize` moves both at once: it shrinks the stored image and the density
+together, preserving world tiling. `-lmtexsize` separates them - the texture
+keeps every pixel and instead tiles over proportionally more world.
+
+The stored image, as written to the WAD:
+
+![Stored texture at each setting](.github/assets/lmtexsize-stored.png)
+
+The same wall in game, over a fixed area of world:
+
+![The same wall in world space](.github/assets/lmtexsize-world.png)
+
+**A** is the baseline. **B** caps the stored size, and loses detail while
+tiling identically. **C** keeps A's pixels but spends B's luxels, covering more
+world per repeat. So `-lmtexsize` does not buy sharpness - apparent sharpness
+is texels-per-unit and nothing else - it buys *fewer visible repeats* at the
+same sharpness. Use it where a texture's tiling is repetitive and its scale is
+not load bearing; avoid it where the tiling scale is part of the design.
+
+`hltools bsp info` reports the atlas budget per texture, which is what
+identifies the material to cap first.
 
 #### Displacements
 

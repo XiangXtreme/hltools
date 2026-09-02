@@ -19,7 +19,10 @@ namespace
             sink.u8(0);
     }
 
-    std::vector<byte> make_rgb_vtf(unsigned dimension)
+    // varied=false writes one flat colour, which is what the automatic
+    // single-colour reduction looks for; varied=true defeats it so density
+    // behaviour can be tested on its own
+    std::vector<byte> make_rgb_vtf(unsigned dimension, bool varied = false)
     {
         std::vector<byte> data;
         binary::writer sink(data);
@@ -48,9 +51,9 @@ namespace
         pad(sink, 15);
         for (unsigned pixel = 0; pixel < dimension * dimension; pixel++)
         {
-            sink.u8(96);
-            sink.u8(128);
-            sink.u8(160);
+            sink.u8(varied ? (byte)(pixel * 7) : (byte)96);
+            sink.u8(varied ? (byte)(pixel * 13) : (byte)128);
+            sink.u8(varied ? (byte)(pixel * 29) : (byte)160);
         }
         return data;
     }
@@ -148,6 +151,92 @@ suite("unit.decompile.source_materials")
         require(catalog.textures().size() == 1);
         expect(catalog.textures()[0].width == 32);
         expect(catalog.textures()[0].height == 32);
+    }
+
+    test("material_catalog reduces single-colour materials to the minimum size")
+    {
+        std::filesystem::path game =
+            test_support::scratch_directory("source_materials_flat");
+        std::filesystem::path materials = game / "materials" / "custom";
+        require(fs::make_directory(materials.string()));
+        write_material(materials / "fill.vmt", "LightmappedGeneric");
+        std::vector<byte> vtf = make_rgb_vtf(64);
+        require(fs::write_all((materials / "missing.vtf").string(),
+                              vtf.data(), vtf.size()));
+
+        format::source_map_data map;
+        map.material_names = {"custom/fill"};
+
+        decompile::material_catalog catalog;
+        catalog.build(map, {game.string()}, 512);
+
+        const decompile::resolved_material &material = catalog.resolve("custom/fill");
+        require(material.has_texture);
+        expect(material.flat);
+        expect(catalog.flattened() == 1);
+        // the density falls with the size, which is the whole point: a flat
+        // fill costs lightmap atlas for detail it does not have
+        expect(material.u_scale == 0.25);
+        expect(material.v_scale == 0.25);
+        require(catalog.textures().size() == 1);
+        expect(catalog.textures()[0].width == 16);
+        expect(catalog.textures()[0].height == 16);
+    }
+
+    test("material_catalog keeps single-colour materials when auto flat is off")
+    {
+        std::filesystem::path game =
+            test_support::scratch_directory("source_materials_flat_off");
+        std::filesystem::path materials = game / "materials" / "custom";
+        require(fs::make_directory(materials.string()));
+        write_material(materials / "fill.vmt", "LightmappedGeneric");
+        std::vector<byte> vtf = make_rgb_vtf(64);
+        require(fs::write_all((materials / "missing.vtf").string(),
+                              vtf.data(), vtf.size()));
+
+        format::source_map_data map;
+        map.material_names = {"custom/fill"};
+
+        decompile::material_catalog catalog;
+        catalog.build(map, {game.string()}, 64, {}, 0, false);
+
+        const decompile::resolved_material &material = catalog.resolve("custom/fill");
+        require(material.has_texture);
+        expect_false(material.flat);
+        expect(catalog.flattened() == 0);
+        expect(material.u_scale == 1.0);
+        require(catalog.textures().size() == 1);
+        expect(catalog.textures()[0].width == 64);
+    }
+
+    test("material_catalog can derive lightmap density from a smaller size than it stores")
+    {
+        std::filesystem::path game =
+            test_support::scratch_directory("source_materials_lmsize");
+        std::filesystem::path materials = game / "materials" / "custom";
+        require(fs::make_directory(materials.string()));
+        write_material(materials / "detail.vmt", "LightmappedGeneric");
+        std::vector<byte> vtf = make_rgb_vtf(64, true);
+        require(fs::write_all((materials / "missing.vtf").string(),
+                              vtf.data(), vtf.size()));
+
+        format::source_map_data map;
+        map.material_names = {"custom/detail"};
+
+        decompile::material_catalog catalog;
+        catalog.build(map, {game.string()}, 64, {}, 16);
+
+        const decompile::resolved_material &material = catalog.resolve("custom/detail");
+        require(material.has_texture);
+        expect_false(material.flat);
+        // every pixel is kept, but the axes carry the 16-wide density, so the
+        // texture tiles over four times the world distance for a quarter of the
+        // luxels at the same apparent sharpness
+        expect(material.u_scale == 0.25);
+        expect(material.v_scale == 0.25);
+        require(catalog.textures().size() == 1);
+        expect(catalog.textures()[0].width == 64);
+        expect(catalog.textures()[0].height == 64);
     }
 
     test("material_catalog preserves additive blending")
