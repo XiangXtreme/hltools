@@ -129,22 +129,28 @@ namespace format
                           [axis](const color_entry &a, const color_entry &b)
                           { return a.rgb[axis] < b.rgb[axis]; });
 
-                // split at the population median so dense regions get finer boxes
-                unsigned total = 0;
+                // split at the population median, so dense regions get finer boxes
+                // scan the whole box, since a dominant colour sorts to one end and
+                // stopping short of it peels 1 colour per split
+                unsigned long long total = 0;
                 for (int i = box.start; i < box.end; i++)
                     total += colors[(std::size_t)i].count;
-                unsigned half = total / 2;
-                unsigned acc = 0;
+                unsigned long long acc = 0;
                 int split = box.start + 1;
-                for (int i = box.start; i < box.end - 1; i++)
+                for (int i = box.start; i < box.end; i++)
                 {
                     acc += colors[(std::size_t)i].count;
-                    if (acc >= half)
+                    if (acc * 2 >= total)
                     {
                         split = i + 1;
                         break;
                     }
                 }
+                // both sides must stay non-empty
+                if (split >= box.end)
+                    split = box.end - 1;
+                if (split <= box.start)
+                    split = box.start + 1;
 
                 color_box lo{box.start, split, 0, 0};
                 color_box hi{split, box.end, 0, 0};

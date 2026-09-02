@@ -1,3 +1,4 @@
+#include <set>
 #include <vector>
 
 #include "common/types.h"
@@ -103,5 +104,46 @@ suite("unit.format.quantize")
         require(out.pixels.size() == 2);
         expect(out.pixels[0] == 1);
         expect(out.pixels[1] == 255);
+    }
+
+    // a poster on a flat ground puts over half the image in one histogram entry,
+    // which used to average away into a single palette entry. needs more distinct
+    // colours than slots to show: below that every colour wins its own.
+    test("quantize.dominant colour keeps its own palette entry")
+    {
+        const unsigned w = 100, h = 30;
+        std::vector<byte> rgb;
+        rgb.reserve((std::size_t)w * h * 3);
+        unsigned dark = 0;
+        for (unsigned i = 0; i < w * h; i++)
+        {
+            if (i % 5 != 0) // 80% of the image is one exact colour
+            {
+                rgb.insert(rgb.end(), {255, 255, 255});
+                continue;
+            }
+            // 600 distinct dark colours, comfortably over the 256 slots
+            rgb.insert(rgb.end(), {(byte)(dark % 10 * 2),
+                                   (byte)(dark / 10 % 10 * 2),
+                                   (byte)(dark / 100 * 2)});
+            dark++;
+        }
+
+        format::indexed_image out;
+        require(format::quantize_rgb(rgb.data(), w, h, out));
+
+        // pixel 1 is white; its entry must be exactly white, not an average of
+        // white with the dark colours it was never separated from
+        byte white_index = out.pixels[1];
+        expect(out.palette[white_index][0] == 255);
+        expect(out.palette[white_index][1] == 255);
+        expect(out.palette[white_index][2] == 255);
+
+        // and the dark pixels must not be swept onto that same entry
+        std::size_t on_white = 0;
+        for (std::size_t i = 0; i < out.pixels.size(); i += 5)
+            if (out.pixels[i] == white_index)
+                on_white++;
+        expect(on_white == 0);
     }
 }
