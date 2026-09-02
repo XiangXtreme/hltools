@@ -533,7 +533,7 @@ What we currently support:
 - Original brush and brushside geometry
 - Entity and light conversion, including one player start
 - Detail, water, transparent, masked, and additive brushes
-- Displacements converted to `func_detail` with simpler collision
+- Displacements converted to `func_detail`, or to studio models with `-dispmodels`
 - Materials converted to a companion WAD
 - Materials and models loaded from the BSP, `-game` directories, and VPK files
 - Studio model conversion and static prop placement
@@ -563,6 +563,11 @@ Options:
 | `-chunkskins <n>` | Split model skins into `1`, `2`, `4`, or `8` tiles per axis | `1` (off) |
 | `-sharedpalette` | Share one palette across material tiles | Off |
 | `-tilearea <10..100>` | Limit the surface area receiving dedicated tiles | `100` |
+| `-disppower <0..4>` | Cap the drawn displacement tessellation | `4` (Source's own detail) |
+| `-dispmodels` | Draw displacements as studio models rather than brushes | Off |
+| `-dispchunk <n>` | Terrain model chunk size (`128..8192`) | `1024` |
+| `-dispclip <scope>` | Displacement collision: `all`, `floors`, or `none` | `all` |
+| `-dispmerge <n>` | Merge collision cells flatter than `<n>` units into one brush (`0..512`) | `48` |
 | `-phyclip` | Convert `.phy` collision to brush entities | Off |
 
 Skin tiling avoids downscaling large model skins. Lower `-chunkskins` or
@@ -570,6 +575,15 @@ Skin tiling avoids downscaling large model skins. Lower `-chunkskins` or
 
 `-phyclip` converts prop collision into brushes. Complex collision can exceed
 GoldSrc's 32,767 clipnode limit.
+
+#### Displacements
+
+Displacement terrain is expensive in GoldSrc: as brushes, a heavily displaced
+map overruns the plane, node and vertex limits long before it is drawable.
+`-disppower` caps the drawn tessellation, and `-dispmodels` draws the surface
+from studio models instead, which cost no planes, nodes, faces or vertices.
+A GoldSrc model does not collide, so collision stays with the brushes and is
+controlled separately by `-dispclip` and `-dispmerge`.
 
 ### `wad`
 

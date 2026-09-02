@@ -26,4 +26,9 @@ namespace format
                             std::string *error = nullptr);
     bool build_mip_texture(const std::string &name, const indexed_image &image,
                            mip_texture &texture, std::string *error = nullptr);
+    // the inverse of build_mip_texture, recovering mip level 0 and the palette
+    // studio skins are indexed images, so a wad texture comes back out here
+    // rather than being decoded from its source material again
+    bool decode_mip_image(const mip_texture &texture, indexed_image &image,
+                          std::string *error = nullptr);
 }

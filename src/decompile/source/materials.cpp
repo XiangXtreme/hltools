@@ -60,6 +60,15 @@ namespace decompile
                 return "SKIP";
             if (iequals(m, "TOOLS/TOOLSSKYBOX") || iequals(m, "TOOLS/TOOLSSKYBOX2D"))
                 return "SKY";
+            // goldsrc has no areaportals or occluders, vis does the whole job
+            // unmapped they resolve to ordinary textures and get drawn
+            if (iequals(m, "TOOLS/TOOLSAREAPORTAL")
+                || iequals(m, "TOOLS/TOOLSAREAPORTALWINDOW")
+                || iequals(m, "TOOLS/TOOLSOCCLUDER")
+                || iequals(m, "TOOLS/TOOLSBLOCKLIGHT")
+                || iequals(m, "TOOLS/TOOLSBLOCK_LOS")
+                || iequals(m, "TOOLS/TOOLSFOG"))
+                return "NULL";
             return nullptr;
         }
 

@@ -222,6 +222,7 @@ target_link_libraries(hltools_decompile PUBLIC hltools_format hltools_math hltoo
 # Source BSP to GoldSrc MAP, WAD, model, and sky conversion
 add_library(hltools_port STATIC
     src/decompile/source/displacements.cpp
+    src/decompile/source/displacement_models.cpp
     src/decompile/source/entities.cpp
     src/decompile/source/map.cpp
     src/decompile/source/materials.cpp

@@ -52,6 +52,35 @@ namespace decompile
         float tile_area_keep = 1.0f;
         // rebuild .phy convexes as invisible solid brush entities.
         bool physics_clips = false;
+        // cap on the drawn tessellation, 0..4, sampled on a 2^min(power, cap) grid
+        // the lever that brings a displacement-heavy map under the plane and
+        // face limits; 4 keeps source's full detail
+        int displacement_power = 4;
+        // draw the displacement surface from studio models, which cost no planes,
+        // nodes, faces or verts
+        // a model does not collide, so the brushes below keep the collision
+        bool displacement_models = false;
+        // edge length of a terrain model chunk
+        // the engine lights a model from 1 sample at its origin, so smaller
+        // chunks light better and cost another copy of every skin they touch
+        double displacement_chunk = 1024.0;
+        // which displacements keep brush collision
+        // floors drops walls and ceilings, which is what brings a large terrain
+        // under max_map_clipnodes once the surface is drawn from models
+        enum class collision_scope
+        {
+            all,
+            floors,
+            none
+        };
+        collision_scope displacement_clip = collision_scope::all;
+        // how far a collision cell's corners may move onto a single plane,
+        // so the cell is 1 brush instead of 2
+        // higher trades surface accuracy for cheaper brushes
+        double displacement_merge = 48.0;
+        // gives generated terrain models a home under models/<map_name>/
+        // empty writes them to models/
+        std::string map_name;
     };
 
     struct source_result
@@ -117,6 +146,12 @@ namespace decompile
         // placements are already emitted into the map as entities.
         model_result models;
         std::size_t prop_entities = 0; // static props turned back into entities
+        // displacement terrain drawn from studio models rather than brushes
+        std::size_t terrain_chunks = 0;
+        std::size_t terrain_entities = 0;
+        std::size_t terrain_triangles = 0;
+        std::size_t terrain_skins = 0;
+        std::size_t failed_terrain_chunks = 0;
         // inert brush entities folded together to stay under the model limit
         std::size_t merged_brush_entities = 0;
         std::size_t brush_entity_groups = 0;

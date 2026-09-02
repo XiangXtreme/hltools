@@ -97,7 +97,7 @@ namespace decompile
                           std::vector<source_displacement_triangle> &output,
                           vec3 a, vec3 b, vec3 c,
                           const vec3 &base_normal, double minimum_projection,
-                          int texinfo)
+                          int texinfo, bool solid)
         {
             vec3 normal = math::cross(b - a, c - a);
             if (math::normalize(normal) == 0)
@@ -115,13 +115,79 @@ namespace decompile
             triangle.base_normal = base_normal;
             triangle.minimum_projection = minimum_projection;
             triangle.texinfo = texinfo;
+            triangle.solid = solid;
             output.push_back(triangle);
+        }
+
+        // a cell's 4 corners as 1 brush, when flat enough to share a top plane
+        // false leaves the cell triangulated
+        bool add_quad(std::vector<source_displacement_triangle> &output,
+                      const vec3 &a, const vec3 &b, const vec3 &c, const vec3 &d,
+                      const vec3 &base_normal, double minimum_projection,
+                      int texinfo, double tolerance)
+        {
+            // newell's normal averages the outline rather than trusting 3 corners,
+            // so a warped cell splits down the middle rather than hinging
+            const vec3 outline[4] = {a, b, c, d};
+            vec3 normal{0, 0, 0};
+            vec3 centre{0, 0, 0};
+            for (int i = 0; i < 4; i++)
+            {
+                const vec3 &p = outline[i];
+                const vec3 &q = outline[(i + 1) % 4];
+                normal.x += (p.y - q.y) * (p.z + q.z);
+                normal.y += (p.z - q.z) * (p.x + q.x);
+                normal.z += (p.x - q.x) * (p.y + q.y);
+                centre = centre + p;
+            }
+            if (math::normalize(normal) == 0)
+                return false;
+            centre = centre * 0.25;
+
+            // the merged face is 1 plane, and tolerance bounds the corner movement
+            for (const vec3 &p : outline)
+                if (std::fabs(math::dot(normal, p - centre)) > tolerance)
+                    return false;
+
+            // a reflex corner would enclose more than the cell
+            vec3 corners[4];
+            for (int i = 0; i < 4; i++)
+                corners[i] = outline[i]
+                    - normal * math::dot(normal, outline[i] - centre);
+            double sign = 0;
+            for (int i = 0; i < 4; i++)
+            {
+                vec3 e0 = corners[(i + 1) % 4] - corners[i];
+                vec3 e1 = corners[(i + 2) % 4] - corners[(i + 1) % 4];
+                double turn = math::dot(math::cross(e0, e1), normal);
+                if (sign == 0)
+                    sign = turn;
+                else if (turn * sign < 0)
+                    return false;
+                if (std::fabs(turn) < 1e-9)
+                    return false;
+            }
+
+            source_displacement_triangle quad;
+            quad.point_count = 4;
+            for (int i = 0; i < 4; i++)
+                quad.points[i] = corners[i];
+            if (math::dot(normal, base_normal) < 0)
+                std::swap(quad.points[1], quad.points[3]);
+            quad.base_normal = base_normal;
+            quad.minimum_projection = minimum_projection;
+            quad.texinfo = texinfo;
+            quad.solid = false;
+            output.push_back(quad);
+            return true;
         }
     }
 
     source_displacement_mesh build_source_displacement_mesh(
-        const format::source_map_data &map)
+        const format::source_map_data &map, int draw_power_cap,
+        bool drawn_carries_collision, double merge_tolerance)
     {
+        draw_power_cap = std::max(0, std::min(draw_power_cap, 4));
         source_displacement_mesh mesh;
         std::vector<vec3> corners;
 
@@ -195,7 +261,7 @@ namespace decompile
             }
 
             auto append_grid =
-                [&](int step,
+                [&](int step, bool solid, double merge_tolerance,
                     std::vector<source_displacement_triangle> &output)
             {
                 for (int row = 0; row < side - 1; row += step)
@@ -207,28 +273,47 @@ namespace decompile
                         std::size_t d =
                             a + (std::size_t)step * (std::size_t)side;
                         std::size_t c = d + (std::size_t)step;
+                        if (merge_tolerance > 0
+                            && add_quad(output, grid[a], grid[b], grid[c],
+                                        grid[d], normal, minimum_projection,
+                                        face.texinfo, merge_tolerance))
+                            continue;
                         if ((((row / step) + (column / step)) & 1) == 0)
                         {
                             add_triangle(mesh, output, grid[a], grid[b], grid[c],
-                                         normal, minimum_projection, face.texinfo);
+                                         normal, minimum_projection,
+                                         face.texinfo, solid);
                             add_triangle(mesh, output, grid[a], grid[c], grid[d],
-                                         normal, minimum_projection, face.texinfo);
+                                         normal, minimum_projection,
+                                         face.texinfo, solid);
                         }
                         else
                         {
                             add_triangle(mesh, output, grid[a], grid[b], grid[d],
-                                         normal, minimum_projection, face.texinfo);
+                                         normal, minimum_projection,
+                                         face.texinfo, solid);
                             add_triangle(mesh, output, grid[b], grid[c], grid[d],
-                                         normal, minimum_projection, face.texinfo);
+                                         normal, minimum_projection,
+                                         face.texinfo, solid);
                         }
                     }
                 }
             };
 
-            append_grid(1, mesh.triangles);
-            int collision_power = std::min(info.power, 2);
+            int draw_power = std::min(info.power, draw_power_cap);
+            int draw_step = 1 << (info.power - draw_power);
+            // collision is never finer than the drawn grid or the power-2 cap
+            int collision_power = std::min(draw_power, 2);
             int collision_step = 1 << (info.power - collision_power);
-            append_grid(collision_step, mesh.collision_triangles);
+            // identical grids would duplicate every triangle, so draw 1 solid brush
+            bool solid = drawn_carries_collision && collision_step == draw_step;
+
+            // the drawn mesh is never merged, since a quad through non-coplanar
+            // corners creases against its neighbours
+            append_grid(draw_step, solid, 0.0, mesh.triangles);
+            if (!solid)
+                append_grid(collision_step, false, merge_tolerance,
+                            mesh.collision_triangles);
             mesh.faces++;
         }
         return mesh;

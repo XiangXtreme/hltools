@@ -40,6 +40,19 @@ namespace tools
                 "  -chunkskins <n>     tiles per model-skin axis: 1, 2, 4, or 8\n"
                 "  -sharedpalette      share palettes across material tiles\n"
                 "  -tilearea <n>       surface area receiving tiles, 10..100\n"
+                "  -disppower <n>      displacement detail cap, 0..4 (default 4);\n"
+                "                      lower it when a displacement-heavy map\n"
+                "                      overruns the goldsrc plane/face limits\n"
+                "  -dispmodels         draw displacements as studio models, which\n"
+                "                      cost no planes, nodes or faces; collision\n"
+                "                      stays with the brushes\n"
+                "  -dispchunk <n>      terrain model chunk size, 128..8192\n"
+                "                      (default 1024)\n"
+                "  -dispclip <scope>   displacement collision: all | floors | none\n"
+                "                      (default all)\n"
+                "  -dispmerge <n>      collision cells flatter than <n> units\n"
+                "                      become one brush instead of two, 0..512\n"
+                "                      (default 48)\n"
                 "  -phyclip            convert .phy collision to brush entities\n"
                 "  -force              overwrite output files\n");
         }
@@ -120,7 +133,10 @@ namespace tools
                      unsigned max_skin_size, int skin_chunk_level,
                      bool shared_tile_palette, float tile_area_keep,
                      const std::vector<std::string> &full_size_textures,
-                     bool physics_clips, bool force)
+                     bool physics_clips, int displacement_power,
+                     bool displacement_models, double displacement_chunk,
+                     decompile::source_options::collision_scope displacement_clip,
+                     double displacement_merge, bool force)
         {
             format::source_map_data source;
             std::string error;
@@ -149,6 +165,17 @@ namespace tools
             options.tile_area_keep = tile_area_keep;
             options.full_size_textures = full_size_textures;
             options.physics_clips = physics_clips;
+            options.displacement_power = displacement_power;
+            options.displacement_models = displacement_models;
+            options.displacement_chunk = displacement_chunk;
+            options.displacement_clip = displacement_clip;
+            options.displacement_merge = displacement_merge;
+            // terrain models live under models/<map name>/, not the output path
+            std::string map_name = fs::filename(map_path);
+            std::size_t dot = map_name.rfind('.');
+            if (dot != std::string::npos)
+                map_name.erase(dot);
+            options.map_name = map_name;
             options.additional_wad =
                 stdfs::absolute(stdfs::path(wad_path)).lexically_normal().string();
             if (!tool_wad.empty())
@@ -263,6 +290,12 @@ namespace tools
         float tile_area_keep = 1.0f;
         std::vector<std::string> full_size_textures;
         bool physics_clips = false;
+        int displacement_power = 4;
+        bool displacement_models = false;
+        double displacement_chunk = 1024.0;
+        double displacement_merge = 48.0;
+        decompile::source_options::collision_scope displacement_clip =
+            decompile::source_options::collision_scope::all;
         std::vector<std::string> positional;
         for (int i = 1; i < argc; i++)
         {
@@ -281,6 +314,11 @@ namespace tools
                 shared_tile_palette = true;
                 continue;
             }
+            if (str::iequals(argv[i], "-dispmodels"))
+            {
+                displacement_models = true;
+                continue;
+            }
             if (str::iequals(argv[i], "-wad") || str::iequals(argv[i], "-toolwad")
                 || str::iequals(argv[i], "-game") || str::iequals(argv[i], "-skysize")
                 || str::iequals(argv[i], "-skyexposure")
@@ -288,6 +326,10 @@ namespace tools
                 || str::iequals(argv[i], "-maxskinsize")
                 || str::iequals(argv[i], "-chunkskins")
                 || str::iequals(argv[i], "-tilearea")
+                || str::iequals(argv[i], "-disppower")
+                || str::iequals(argv[i], "-dispchunk")
+                || str::iequals(argv[i], "-dispclip")
+                || str::iequals(argv[i], "-dispmerge")
                 || str::iequals(argv[i], "-fulltex"))
             {
                 const std::string option = argv[i];
@@ -366,6 +408,59 @@ namespace tools
                     }
                     tile_area_keep = (float)(value / 100.0);
                 }
+                else if (str::iequals(option.c_str(), "-disppower"))
+                {
+                    char *end = nullptr;
+                    long value = std::strtol(argv[i], &end, 10);
+                    if (!end || *end != '\0' || value < 0 || value > 4)
+                    {
+                        logging::console("bsp port: -disppower expects 0..4\n");
+                        return 1;
+                    }
+                    displacement_power = (int)value;
+                }
+                else if (str::iequals(option.c_str(), "-dispchunk"))
+                {
+                    char *end = nullptr;
+                    double value = std::strtod(argv[i], &end);
+                    if (!end || *end != '\0' || !std::isfinite(value)
+                        || value < 128.0 || value > 8192.0)
+                    {
+                        logging::console("bsp port: -dispchunk expects 128..8192\n");
+                        return 1;
+                    }
+                    displacement_chunk = value;
+                }
+                else if (str::iequals(option.c_str(), "-dispmerge"))
+                {
+                    char *end = nullptr;
+                    double value = std::strtod(argv[i], &end);
+                    if (!end || *end != '\0' || !std::isfinite(value)
+                        || value < 0.0 || value > 512.0)
+                    {
+                        logging::console("bsp port: -dispmerge expects 0..512\n");
+                        return 1;
+                    }
+                    displacement_merge = value;
+                }
+                else if (str::iequals(option.c_str(), "-dispclip"))
+                {
+                    if (str::iequals(argv[i], "all"))
+                        displacement_clip = decompile::source_options::
+                            collision_scope::all;
+                    else if (str::iequals(argv[i], "floors"))
+                        displacement_clip = decompile::source_options::
+                            collision_scope::floors;
+                    else if (str::iequals(argv[i], "none"))
+                        displacement_clip = decompile::source_options::
+                            collision_scope::none;
+                    else
+                    {
+                        logging::console("bsp port: -dispclip expects all, floors, "
+                                         "or none\n");
+                        return 1;
+                    }
+                }
                 else
                 {
                     char *end = nullptr;
@@ -402,6 +497,9 @@ namespace tools
         return run_port(positional[0], positional[1], wad_path, game_dirs,
                         tool_wad, sky_size, sky_exposure, max_texture_size,
                         max_skin_size, skin_chunk_level, shared_tile_palette,
-                        tile_area_keep, full_size_textures, physics_clips, force);
+                        tile_area_keep, full_size_textures, physics_clips,
+                        displacement_power, displacement_models,
+                        displacement_chunk, displacement_clip,
+                        displacement_merge, force);
     }
 }

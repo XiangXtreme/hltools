@@ -13,6 +13,7 @@
 #include "common/string_util.h"
 #include "entities.h"
 #include "displacements.h"
+#include "displacement_models.h"
 #include "materials.h"
 #include "format/map/document.h"
 #include "format/vbsp/data.h"
@@ -594,6 +595,7 @@ namespace decompile
         {
             constexpr double backing_depth = 8.0;
 
+            int corners = triangle.point_count == 4 ? 4 : 3;
             const vec3 &a = triangle.points[0];
             const vec3 &b = triangle.points[1];
             const vec3 &c = triangle.points[2];
@@ -605,7 +607,7 @@ namespace decompile
 
             vec3 inward = triangle.base_normal * -backing_depth;
             out = format::map_brush{};
-            out.sides.reserve(5);
+            out.sides.reserve((std::size_t)corners + 2);
 
             side_texture texture = collision_only
                 ? special_side("CLIP", normal)
@@ -633,11 +635,10 @@ namespace decompile
                     underside.axes[axis][k] = underside_texture.vecs[axis][k];
             out.sides.push_back(std::move(underside));
 
-            const vec3 points[3] = {a, b, c};
-            for (int edge = 0; edge < 3; edge++)
+            for (int edge = 0; edge < corners; edge++)
             {
-                const vec3 &p = points[edge];
-                const vec3 &q = points[(edge + 1) % 3];
+                const vec3 &p = triangle.points[edge];
+                const vec3 &q = triangle.points[(edge + 1) % corners];
                 vec3 side_normal = math::cross(inward, q - p);
                 if (math::normalize(side_normal) == 0)
                     return false;
@@ -654,18 +655,43 @@ namespace decompile
             return true;
         }
 
+        // a surface a player can stand on
+        // the threshold takes ramps too, since a bhop route runs over both
+        bool is_floor(const source_displacement_triangle &triangle)
+        {
+            return triangle.base_normal.z > 0.3;
+        }
+
+        bool collides(const source_displacement_triangle &triangle,
+                      source_options::collision_scope scope)
+        {
+            switch (scope)
+            {
+            case source_options::collision_scope::none:
+                return false;
+            case source_options::collision_scope::floors:
+                return is_floor(triangle);
+            default:
+                return true;
+            }
+        }
+
         void append_displacements(const format::source_map_data &map,
                                   const material_catalog &catalog,
+                                  const source_options &options,
+                                  const source_displacement_mesh &mesh,
                                   format::map_document &doc,
                                   source_result &result)
         {
-            source_displacement_mesh mesh = build_source_displacement_mesh(map);
             result.displacement_faces = mesh.faces;
             result.skipped_displacement_faces = mesh.skipped_faces;
             result.skipped_displacement_triangles = mesh.skipped_triangles;
 
+            // with the surface drawn from models the brushes are collision only
             for (const source_displacement_triangle &triangle : mesh.triangles)
             {
+                if (options.displacement_models)
+                    break;
                 format::map_brush brush;
                 if (!build_displacement_brush(
                         map, catalog, triangle, result, false, brush))
@@ -673,10 +699,19 @@ namespace decompile
                     result.skipped_displacement_triangles++;
                     continue;
                 }
-                doc.add_brush(std::move(brush), "func_detail",
-                              {{"zhlt_detaillevel", "1"},
-                               {"zhlt_clipnodedetaillevel", "1"},
-                               {"zhlt_noclip", "1"}});
+                // a solid drawn triangle stands in for its own clip hull, so it
+                // keeps the clipnodes zhlt_noclip would have discarded - unless
+                // the clip scope excludes it, in which case it is drawn only
+                if (triangle.solid
+                    && collides(triangle, options.displacement_clip))
+                    doc.add_brush(std::move(brush), "func_detail",
+                                  {{"zhlt_detaillevel", "1"},
+                                   {"zhlt_clipnodedetaillevel", "1"}});
+                else
+                    doc.add_brush(std::move(brush), "func_detail",
+                                  {{"zhlt_detaillevel", "1"},
+                                   {"zhlt_clipnodedetaillevel", "1"},
+                                   {"zhlt_noclip", "1"}});
                 result.displacement_brushes++;
                 result.detail_brushes++;
             }
@@ -684,6 +719,8 @@ namespace decompile
             for (const source_displacement_triangle &triangle
                  : mesh.collision_triangles)
             {
+                if (!collides(triangle, options.displacement_clip))
+                    continue;
                 format::map_brush brush;
                 if (!build_displacement_brush(
                         map, catalog, triangle, result, true, brush))
@@ -1212,7 +1249,12 @@ namespace decompile
             }
         }
 
-        append_displacements(map, catalog, doc, result);
+        // built once: the brush side takes the collision, and the terrain
+        // exporter the same triangles
+        source_displacement_mesh displacements = build_source_displacement_mesh(
+            map, options.displacement_power, !options.displacement_models,
+            options.displacement_merge);
+        append_displacements(map, catalog, options, displacements, doc, result);
 
         // studio models: rebuild each one for goldsrc, then place the static
         // props, which live in a game lump that goldsrc has no equivalent for
@@ -1298,6 +1340,40 @@ namespace decompile
                     result.physics_clip_props++;
                 }
             }
+        }
+
+        // runs after the prop conversion, which resets result.models
+        //
+        // env_sprite, not cycler_sprite: CSprite is SOLID_NOT and takes no damage
+        // only safe while the chunks are axis aligned, since CSprite::Spawn
+        // copies a nonzero yaw into roll
+        // spawnflags 1 and no name, a named CSprite starts off without START_ON
+        if (options.displacement_models)
+        {
+            displacement_model_result terrain = build_displacement_models(
+                map, catalog, displacements, options.map_name,
+                options.displacement_chunk);
+            for (const prop_placement &chunk : terrain.placements)
+            {
+                char origin[96];
+                std::snprintf(origin, sizeof(origin), "%.6g %.6g %.6g",
+                              chunk.origin[0], chunk.origin[1], chunk.origin[2]);
+                doc.add_entity("env_sprite", {{"model", chunk.model},
+                                              {"origin", origin},
+                                              {"spawnflags", "1"},
+                                              {"scale", "1"},
+                                              {"rendermode", "0"},
+                                              {"renderamt", "255"}});
+                result.terrain_entities++;
+            }
+            result.terrain_chunks = terrain.chunks;
+            result.terrain_triangles = terrain.triangles;
+            result.terrain_skins = terrain.skins;
+            result.failed_terrain_chunks = terrain.failed;
+            result.models.models.insert(
+                result.models.models.end(),
+                std::make_move_iterator(terrain.models.begin()),
+                std::make_move_iterator(terrain.models.end()));
         }
 
         merge_static_brush_entities(doc, result);

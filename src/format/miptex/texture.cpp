@@ -204,4 +204,71 @@ namespace format
         }
         return true;
     }
+
+    bool decode_mip_image(const mip_texture &texture, indexed_image &image,
+                          std::string *error)
+    {
+        const std::vector<byte> &data = texture.data;
+        if (data.size() < sizeof(miptex_t))
+        {
+            set_error(error, "texture is smaller than its miptex header");
+            return false;
+        }
+
+        miptex_t header;
+        std::memcpy(&header, data.data(), sizeof(header));
+        if (!header.width || !header.height)
+        {
+            set_error(error, "texture has zero dimensions");
+            return false;
+        }
+
+        // the palette follows the last mip, so every level has to be walked
+        size_t last_end = sizeof(miptex_t);
+        for (int level = 0; level < mip_levels; level++)
+        {
+            size_t width = (size_t)header.width >> level;
+            size_t height = (size_t)header.height >> level;
+            if (!width || !height || width > SIZE_MAX / height)
+            {
+                set_error(error, "texture has invalid mip dimensions");
+                return false;
+            }
+            size_t offset = header.offsets[level];
+            size_t count = width * height;
+            if (offset < sizeof(miptex_t) || offset > data.size()
+                || count > data.size() - offset)
+            {
+                set_error(error, "texture mip level is outside its lump");
+                return false;
+            }
+            last_end = offset + count;
+        }
+        if (data.size() - last_end < 2)
+        {
+            set_error(error, "texture palette header is missing");
+            return false;
+        }
+        unsigned palette_count = (unsigned)data[last_end]
+            | ((unsigned)data[last_end + 1] << 8);
+        if (!palette_count || palette_count > 256
+            || (size_t)palette_count * 3 > data.size() - last_end - 2)
+        {
+            set_error(error, "texture palette is invalid");
+            return false;
+        }
+
+        image = indexed_image{};
+        image.width = header.width;
+        image.height = header.height;
+        size_t base = header.offsets[0];
+        size_t count = (size_t)header.width * header.height;
+        image.pixels.assign(data.begin() + (std::ptrdiff_t)base,
+                            data.begin() + (std::ptrdiff_t)(base + count));
+        for (unsigned i = 0; i < palette_count; i++)
+            for (int k = 0; k < 3; k++)
+                image.palette[i][(size_t)k] =
+                    data[last_end + 2 + (size_t)i * 3 + (size_t)k];
+        return true;
+    }
 }
