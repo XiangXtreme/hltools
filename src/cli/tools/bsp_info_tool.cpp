@@ -138,7 +138,13 @@ namespace tools
                 logging::console("  %-14s %s\n", "wads", names.c_str());
         }
 
-        format::print_usage_chart(map, true, rad::count_alloc_blocks(map));
+        // the atlas is the limit ports hit first
+        // the total alone does not say which texture to coarsen
+        std::vector<rad::atlas_texture_usage> atlas;
+        long long atlas_luxels = 0;
+        int atlas_pages = rad::count_alloc_blocks(map, &atlas, &atlas_luxels);
+        format::print_usage_chart(map, true, atlas_pages);
+        rad::print_atlas_breakdown(atlas, atlas_luxels, "  ");
         return 0;
     }
 }

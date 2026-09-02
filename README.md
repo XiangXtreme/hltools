@@ -72,6 +72,8 @@ GoldSrc packs lightmapped faces into 64 pages of 128x128 luxels. If they do not 
 This early budget check was added in hltools. RAD runs it before direct light creation, light gathering, or bounce computation, so an impossible map fails before the expensive lighting work begins. \
 Above 95% it prints a breakdown by texture ranked by lightmap footprint.
 
+`hltools bsp info` prints the same breakdown for an already compiled BSP at any usage, which is how to see where the budget goes before a map is anywhere near the limit.
+
 hltools tests several legal face orders against the same AllocBlock algorithm before writing the BSP and keeps the order that needs the fewest pages. Node and marksurface references are remapped safely. This slightly reduces packing gaps without changing geometry, texture scale or lightmap resolution. The engine still uses its original fixed 64 page allocator.
 
 ```text
@@ -493,6 +495,8 @@ hltools bsp info maps/example.bsp
 ```
 
 The report includes completed compiler stages, entities, embedded and external textures, WAD references, lightmap atlas usage and every BSP lump against its engine limit.
+
+Atlas usage comes with the per-texture breakdown, ranked by lightmap footprint. RAD prints the same table only when a map is close to overflowing; `bsp info` prints it at any usage, so a map sitting well inside the budget still shows which texture is spending it.
 
 ### `bsp pack`
 

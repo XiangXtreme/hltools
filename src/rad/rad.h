@@ -138,9 +138,25 @@ namespace rad
     // rather than mid compile
     std::string gpu_device_description();
 
-    // calculates how many engine lightmap atlas pages this bsp requires
-    // this is read only and can be used by reporting tools without running rad
-    int count_alloc_blocks(const format::map_data &map);
+    // one texture's share of the lightmap atlas, for the budget breakdown
+    struct atlas_texture_usage
+    {
+        std::string name;
+        int faces;
+        long long luxels;
+    };
+
+    // how many engine lightmap atlas pages this bsp requires
+    // read only, so a reporting tool can call it without running rad
+    // breakdown comes back sorted by luxels, largest first
+    int count_alloc_blocks(const format::map_data &map,
+                           std::vector<atlas_texture_usage> *breakdown = nullptr,
+                           long long *total_luxels = nullptr);
+
+    // prints the table from count_alloc_blocks, which is already sorted
+    // indent lets the same table sit under rad's error banner or read flat
+    void print_atlas_breakdown(const std::vector<atlas_texture_usage> &breakdown,
+                               long long total_luxels, const char *indent = "");
 
     // lights the map in place returns false when the lightmap atlas budget
     // overflowed and lighting was skipped (the map would not load in game)

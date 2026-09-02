@@ -86,12 +86,7 @@ namespace rad
         }
 
         // per texture lightmap footprint for the breakdown report
-        struct texlmusage
-        {
-            std::string name;
-            int faces;
-            long long luxels;
-        };
+        using texlmusage = atlas_texture_usage;
 
         const char *texture_name(const format::map_data &map, int texinfo)
         {
@@ -160,9 +155,13 @@ namespace rad
                 int w = (extents[0] / texture_step) + 1;
                 int h = (extents[1] / texture_step) + 1;
                 do_alloc_block(blocks, w, h);
+                long long luxels = (long long)w * h;
+                if (total_luxels)
+                {
+                    *total_luxels += luxels;
+                }
                 if (breakdown)
                 {
-                    long long luxels = (long long)w * h;
                     auto it = texindex.find(texname);
                     size_t slot;
                     if (it == texindex.end())
@@ -181,10 +180,6 @@ namespace rad
                     }
                     (*breakdown)[slot].faces++;
                     (*breakdown)[slot].luxels += luxels;
-                    if (total_luxels)
-                    {
-                        *total_luxels += luxels;
-                    }
                 }
             }
             int numblocks = 0;
@@ -201,6 +196,58 @@ namespace rad
             return numblocks;
         }
 
+    }
+
+    // shared by rad, which wants it under an error banner, and bsp info, which
+    // wants it plain
+    void print_atlas_breakdown(const std::vector<atlas_texture_usage> &breakdown,
+                               long long total_luxels, const char *indent)
+    {
+        if (breakdown.empty())
+        {
+            return;
+        }
+        const long long budget_luxels =
+            (long long)limits::max_alloc_block_pages * limits::block_width * limits::block_height;
+        auto pct = [budget_luxels](long long luxels)
+        { return budget_luxels ? luxels * 100.0 / budget_luxels : 0.0; };
+
+        const size_t show = 12;
+        logging::console("\n%sLightmap atlas budget by texture (top consumers):\n", indent);
+        logging::console("%s  %-20s %9s %12s  %8s\n", indent, "texture", "faces", "luxels", "% budget");
+        logging::console("%s  --------------------------------------------------------------\n", indent);
+        int total_faces = 0;
+        size_t i;
+        for (i = 0; i < breakdown.size(); i++)
+        {
+            total_faces += breakdown[i].faces;
+        }
+        for (i = 0; i < breakdown.size() && i < show; i++)
+        {
+            logging::console("%s  %-20s %9d %12lld   %6.1f%%\n", indent, breakdown[i].name.c_str(),
+                             breakdown[i].faces, breakdown[i].luxels, pct(breakdown[i].luxels));
+        }
+        if (breakdown.size() > show)
+        {
+            long long rest_luxels = 0;
+            int rest_faces = 0;
+            for (i = show; i < breakdown.size(); i++)
+            {
+                rest_luxels += breakdown[i].luxels;
+                rest_faces += breakdown[i].faces;
+            }
+            char label[32];
+            snprintf(label, sizeof(label), "(%d others)", (int)(breakdown.size() - show));
+            logging::console("%s  %-20s %9d %12lld   %6.1f%%\n", indent, label, rest_faces,
+                             rest_luxels, pct(rest_luxels));
+        }
+        logging::console("%s  --------------------------------------------------------------\n", indent);
+        logging::console("%s  %-20s %9d %12lld   %6.1f%%\n", indent, "total", total_faces,
+                         total_luxels, pct(total_luxels));
+    }
+
+    namespace
+    {
         void print_alloc_block_report(int numblocks, int maxblocks, std::vector<texlmusage> &breakdown, long long total_luxels)
         {
             const int warn_blocks = (maxblocks * 95) / 100; // start reporting past 95% of the budget
@@ -231,48 +278,23 @@ namespace rad
             // biggest luxel footprint first: that is what a mapper needs to shrink
             std::sort(breakdown.begin(), breakdown.end(),
                       [](const texlmusage &a, const texlmusage &b) { return a.luxels > b.luxels; });
-
-            const size_t show = 12;
-            logging::console("\n    Lightmap atlas budget by texture (top consumers):\n");
-            logging::console("      %-20s %9s %12s  %8s\n", "texture", "faces", "luxels", "% budget");
-            logging::console("      --------------------------------------------------------------\n");
-            int total_faces = 0;
-            size_t i;
-            for (i = 0; i < breakdown.size(); i++)
-            {
-                total_faces += breakdown[i].faces;
-            }
-            for (i = 0; i < breakdown.size() && i < show; i++)
-            {
-                double pct = budget_luxels ? breakdown[i].luxels * 100.0 / budget_luxels : 0.0;
-                logging::console("      %-20s %9d %12lld   %6.1f%%\n", breakdown[i].name.c_str(),
-                                 breakdown[i].faces, breakdown[i].luxels, pct);
-            }
-            if (breakdown.size() > show)
-            {
-                long long rest_luxels = 0;
-                int rest_faces = 0;
-                for (i = show; i < breakdown.size(); i++)
-                {
-                    rest_luxels += breakdown[i].luxels;
-                    rest_faces += breakdown[i].faces;
-                }
-                double pct = budget_luxels ? rest_luxels * 100.0 / budget_luxels : 0.0;
-                char label[32];
-                snprintf(label, sizeof(label), "(%d others)", (int)(breakdown.size() - show));
-                logging::console("      %-20s %9d %12lld   %6.1f%%\n", label, rest_faces, rest_luxels, pct);
-            }
-            logging::console("      --------------------------------------------------------------\n");
-            {
-                double pct = budget_luxels ? total_luxels * 100.0 / budget_luxels : 0.0;
-                logging::console("      %-20s %9d %12lld   %6.1f%%\n", "total", total_faces, total_luxels, pct);
-            }
+            print_atlas_breakdown(breakdown, total_luxels, "    ");
         }
     }
 
-    int count_alloc_blocks(const format::map_data &map)
+    int count_alloc_blocks(const format::map_data &map,
+                           std::vector<atlas_texture_usage> *breakdown,
+                           long long *total_luxels)
     {
-        return count_blocks(map);
+        int blocks = count_blocks(map, breakdown, total_luxels);
+        if (breakdown)
+        {
+            // largest consumer first: that is the one worth coarsening
+            std::sort(breakdown->begin(), breakdown->end(),
+                      [](const atlas_texture_usage &a, const atlas_texture_usage &b)
+                      { return a.luxels > b.luxels; });
+        }
+        return blocks;
     }
 
     // early budget check, run before the expensive lighting passes so an
