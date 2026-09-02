@@ -1,6 +1,7 @@
 #include "entities.h"
 
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -164,21 +165,71 @@ namespace decompile
             entity.remove("angles");
         }
 
+        // vrad lights with the linear colour, hlrad with the raw ratios
+        // without this, coloured light desaturates towards white
+        double srgb_channel_to_linear(double channel)
+        {
+            if (channel <= 0.0)
+                return 0.0;
+            return std::pow(channel / 255.0, 2.2) * 255.0;
+        }
+
+        // converts the channels of "R G B [brightness]", not the brightness
+        // the 1 value form is greyscale shorthand, so its number is a colour
+        // anything not 1, 3 or 4 numbers is left for hlrad to reject
+        bool convert_light_colour(format::entity &entity, const char *key)
+        {
+            const char *value = entity.value(key);
+            if (value[0] == '\0')
+                return false;
+
+            double parsed[4] = {0, 0, 0, 0};
+            int count = std::sscanf(value, "%lf %lf %lf %lf", &parsed[0],
+                                    &parsed[1], &parsed[2], &parsed[3]);
+            if (count != 1 && count != 3 && count != 4)
+                return false;
+
+            int channels = (count == 1) ? 1 : 3;
+            char rewritten[128];
+            int written = 0;
+            for (int i = 0; i < count; i++)
+            {
+                double out = (i < channels) ? srgb_channel_to_linear(parsed[i])
+                                            : parsed[i];
+                // colours are whole numbers; brightness keeps its precision
+                int room = (int)sizeof(rewritten) - written;
+                int step = (i < channels)
+                    ? std::snprintf(rewritten + written, (size_t)room, "%s%d",
+                                    i ? " " : "", (int)(out + 0.5))
+                    : std::snprintf(rewritten + written, (size_t)room, " %g", out);
+                if (step <= 0 || step >= room)
+                    return false;
+                written += step;
+            }
+            entity.set(key, rewritten);
+            return true;
+        }
+
         // hlrad reads _diffuse_light and _spread; source writes the same two
         // quantities as _ambient and SunSpreadAngle. without the rename the sky
         // fill silently falls back to the sun's own colour and brightness, and
         // the sun becomes a mathematical point with razor sharp shadow edges.
         // brightness itself is left alone: it is a per map tuning decision, and
         // rescaling it here would quietly change every already ported map.
-        void convert_light_keys(format::entity &entity)
+        void convert_light_keys(format::entity &entity, bool colour_gamma)
         {
             rename_key(entity, "_ambient", "_diffuse_light");
             rename_key(entity, "SunSpreadAngle", "_spread");
+            if (!colour_gamma)
+                return;
+            // after the rename these two cover _ambient as well
+            convert_light_colour(entity, "_light");
+            convert_light_colour(entity, "_diffuse_light");
         }
     }
 
     void remap_source_entities(std::vector<format::entity> &entities,
-                               entity_remap_stats &stats)
+                               entity_remap_stats &stats, bool light_colour_gamma)
     {
         std::vector<format::entity> kept;
         kept.reserve(entities.size());
@@ -261,7 +312,7 @@ namespace decompile
             }
             else if (std::strncmp(classname, "light", 5) == 0)
             {
-                convert_light_keys(entity);
+                convert_light_keys(entity, light_colour_gamma);
                 stats.lights++;
             }
             kept.push_back(std::move(entity));

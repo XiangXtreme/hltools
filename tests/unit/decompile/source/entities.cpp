@@ -39,7 +39,8 @@ suite("unit.decompile.source_entities")
 
         std::vector<format::entity> entities = {world, sun, brush};
         decompile::entity_remap_stats stats;
-        decompile::remap_source_entities(entities, stats);
+        // colour conversion off: this test is about which keys survive
+        decompile::remap_source_entities(entities, stats, false);
 
         require(entities.size() == 3);
         for (const format::entity &entity : entities)
@@ -173,11 +174,67 @@ suite("unit.decompile.source_entities")
                          {"_ambient", "9 9 9 9"}}),
         };
         decompile::entity_remap_stats stats;
-        decompile::remap_source_entities(entities, stats);
+        decompile::remap_source_entities(entities, stats, false);
 
         expect(std::strcmp(entities[1].value("_diffuse_light"), "1 2 3 4") == 0);
         expect_false(entities[1].has("_ambient"));
     }
+
+    test("light colours convert from sRGB to linear")
+    {
+        std::vector<format::entity> entities = {
+            make_entity({{"classname", "worldspawn"}}),
+            make_entity({{"classname", "light_environment"},
+                         {"_light", "207 58 224 2000"},
+                         {"_ambient", "255 255 128 200"}}),
+            make_entity({{"classname", "light"}, {"_light", "95 49 136 1500"}}),
+        };
+        decompile::entity_remap_stats stats;
+        decompile::remap_source_entities(entities, stats);
+
+        expect(std::strcmp(entities[1].value("_light"), "161 10 192 2000") == 0);
+        // renamed from _ambient first, so it converts too
+        expect(std::strcmp(entities[1].value("_diffuse_light"), "255 255 56 200") == 0);
+        expect(std::strcmp(entities[2].value("_light"), "29 7 64 1500") == 0);
+    }
+
+    test("light colour conversion leaves brightness and odd values alone")
+    {
+        std::vector<format::entity> entities = {
+            make_entity({{"classname", "worldspawn"}}),
+            // brightness keeps its precision; white converts to itself
+            make_entity({{"classname", "light"}, {"_light", "255 255 255 0.5"}}),
+            // greyscale shorthand: the single number is a colour
+            make_entity({{"classname", "light"}, {"_light", "200"}}),
+            make_entity({{"classname", "light"}, {"_light", "207 58 224"}}),
+            // left for hlrad to reject
+            make_entity({{"classname", "light"}, {"_light", "not a colour"}}),
+        };
+        decompile::entity_remap_stats stats;
+        decompile::remap_source_entities(entities, stats);
+
+        expect(std::strcmp(entities[1].value("_light"), "255 255 255 0.5") == 0);
+        expect(std::strcmp(entities[2].value("_light"), "149") == 0);
+        expect(std::strcmp(entities[3].value("_light"), "161 10 192") == 0);
+        expect(std::strcmp(entities[4].value("_light"), "not a colour") == 0);
+    }
+
+    test("light colour conversion can be turned off")
+    {
+        std::vector<format::entity> entities = {
+            make_entity({{"classname", "worldspawn"}}),
+            make_entity({{"classname", "light_environment"},
+                         {"_light", "207 58 224 2000"},
+                         {"_ambient", "255 255 128 200"}}),
+        };
+        decompile::entity_remap_stats stats;
+        decompile::remap_source_entities(entities, stats, false);
+
+        expect(std::strcmp(entities[1].value("_light"), "207 58 224 2000") == 0);
+        // the rename still happens, only the colour is left alone
+        expect(std::strcmp(entities[1].value("_diffuse_light"), "255 255 128 200") == 0);
+    }
+
     test("the chosen spawn rises to the goldsrc hull centre")
     {
         // source puts a spawn origin at the feet, goldsrc at the centre of a
@@ -221,4 +278,5 @@ suite("unit.decompile.source_entities")
         expect(std::strcmp(entities[1].value("origin"), "-320 480 37") == 0);
         expect(stats.dropped_spawns == 1);
     }
+
 }

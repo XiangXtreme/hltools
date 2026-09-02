@@ -1006,7 +1006,7 @@ namespace decompile
         world_box box = read_world_box(entities);
 
         entity_remap_stats spawn_stats;
-        remap_source_entities(entities, spawn_stats);
+        remap_source_entities(entities, spawn_stats, options.light_colour_gamma);
         result.dropped_spawns = spawn_stats.dropped_spawns;
         result.player_start = spawn_stats.player_start;
         result.fog_controllers = spawn_stats.fog_controllers;

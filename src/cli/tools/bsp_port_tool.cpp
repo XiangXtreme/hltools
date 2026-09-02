@@ -41,6 +41,8 @@ namespace tools
                 "                      (default: follow -maxtexsize)\n"
                 "  -noflattex          keep single-colour materials at full size\n"
                 "                      instead of reducing them to 16x16\n"
+                "  -nolightgamma       keep source's raw light colours instead of\n"
+                "                      converting them from sRGB to linear\n"
                 "  -fulltex <material> bypass the texture cap; repeatable\n"
                 "  -maxskinsize <n>    model skin cap, 16..512 in steps of 16\n"
                 "  -chunkskins <n>     tiles per model-skin axis: 1, 2, 4, or 8\n"
@@ -137,6 +139,7 @@ namespace tools
                      const std::string &tool_wad, unsigned sky_size,
                      double sky_exposure, unsigned max_texture_size,
                      unsigned lightmap_texture_size, bool auto_flat_textures,
+                     bool light_colour_gamma,
                      unsigned max_skin_size, int skin_chunk_level,
                      bool shared_tile_palette, float tile_area_keep,
                      const std::vector<std::string> &full_size_textures,
@@ -168,6 +171,7 @@ namespace tools
             options.max_texture_size = max_texture_size;
             options.lightmap_texture_size = lightmap_texture_size;
             options.auto_flat_textures = auto_flat_textures;
+            options.light_colour_gamma = light_colour_gamma;
             options.max_skin_size = max_skin_size;
             options.skin_chunk_level = skin_chunk_level;
             options.shared_tile_palette = shared_tile_palette;
@@ -299,6 +303,7 @@ namespace tools
         unsigned max_texture_size = 512;
         unsigned lightmap_texture_size = 0; // 0 follows max_texture_size
         bool auto_flat_textures = true;
+        bool light_colour_gamma = true;
         unsigned max_skin_size = 512;
         int skin_chunk_level = 1;
         bool shared_tile_palette = false;
@@ -337,6 +342,11 @@ namespace tools
             if (str::iequals(argv[i], "-noflattex"))
             {
                 auto_flat_textures = false;
+                continue;
+            }
+            if (str::iequals(argv[i], "-nolightgamma"))
+            {
+                light_colour_gamma = false;
                 continue;
             }
             if (str::iequals(argv[i], "-wad") || str::iequals(argv[i], "-toolwad")
@@ -531,6 +541,7 @@ namespace tools
         return run_port(positional[0], positional[1], wad_path, game_dirs,
                         tool_wad, sky_size, sky_exposure, max_texture_size,
                         lightmap_texture_size, auto_flat_textures,
+                        light_colour_gamma,
                         max_skin_size, skin_chunk_level, shared_tile_palette,
                         tile_area_keep, full_size_textures, physics_clips,
                         displacement_power, displacement_models,

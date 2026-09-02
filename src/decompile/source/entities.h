@@ -24,6 +24,10 @@ namespace decompile
 
     // rewrites supported entities in place, removes unsupported metadata, and
     // keeps one player start. entity order remains stable for brush models.
+    //
+    // light_colour_gamma converts light colours from sRGB to linear, as vrad
+    // does and hlrad does not. off keeps source's raw values.
     void remap_source_entities(std::vector<format::entity> &entities,
-                               entity_remap_stats &stats);
+                               entity_remap_stats &stats,
+                               bool light_colour_gamma = true);
 }

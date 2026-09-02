@@ -565,6 +565,7 @@ Options:
 | `-lmtexsize <n>` | Derive lightmap density from this size instead (`16..512`, step 16) | Follows `-maxtexsize` |
 | `-fulltex <material>` | Bypass `-maxtexsize`; repeatable | None |
 | `-noflattex` | Keep single-colour materials at full size | Off (they become 16x16) |
+| `-nolightgamma` | Keep Source's raw light colours instead of converting sRGB to linear | Off (conversion on) |
 | `-maxskinsize <n>` | Cap model skins (`16..512`, step 16) | `512` |
 | `-chunkskins <n>` | Split model skins into `1`, `2`, `4`, or `8` tiles per axis | `1` (off) |
 | `-sharedpalette` | Share one palette across material tiles | Off |
@@ -611,6 +612,17 @@ not load bearing; avoid it where the tiling scale is part of the design.
 
 `hltools bsp info` reports the atlas budget per texture, which is what
 identifies the material to cap first.
+
+#### Light colours
+
+VRAD lights with the linear colour, while HLRAD uses the raw ratios
+(`intensity = RGB / 255 * brightness`). Carried across unchanged every low
+channel stays too strong, and coloured light desaturates towards white, so
+a ported light entity has its `_light` and `_diffuse_light` colours
+converted from sRGB to linear.
+
+Only the colour channels convert; brightness is a tuning decision and is
+left alone. `-nolightgamma` keeps Source raw values.
 
 #### Displacements
 

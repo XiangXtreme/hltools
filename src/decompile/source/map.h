@@ -46,6 +46,9 @@ namespace decompile
         // Source material names (or generated GoldSrc basenames) that bypass the
         // global cap and retain their native dimensions, up to GoldSrc's 512 limit.
         std::vector<std::string> full_size_textures;
+        // convert light colours from srgb to linear, as vrad does and hlrad
+        // does not; off keeps source's raw values
+        bool light_colour_gamma = true;
         // rebuild the map's studio models as goldsrc models and place them as
         // entities. off leaves the map brush only.
         bool convert_models = true;
