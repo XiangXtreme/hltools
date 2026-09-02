@@ -350,6 +350,16 @@ namespace format
         r.u16_at(16, width);
         r.u16_at(18, height);
 
+        // a mip level holds every frame before the next level begins
+        // stepping 1 frame lands mid-level and decodes noise
+        // hl2 dev/water is 29 frames
+        std::uint16_t frames = 0;
+        r.u16_at(24, frames);
+        if (frames == 0)
+        {
+            frames = 1;
+        }
+
         std::int32_t high_format = 0, low_format = 0;
         std::uint8_t mip_count = 0, low_w = 0, low_h = 0;
         r.i32_at(52, high_format);
@@ -393,18 +403,20 @@ namespace format
                 set_error(error, "unsupported vtf pixel format");
                 return false;
             }
-            if (cursor + bytes > data.size())
+            std::size_t level_bytes = bytes * (std::size_t)frames;
+            if (cursor + level_bytes > data.size())
             {
                 set_error(error, "vtf mip data extends past the file");
                 return false;
             }
             if (stored == level)
             {
+                // frame 0 comes first within the level
                 chosen.assign(data.begin() + cursor, data.begin() + cursor + bytes);
                 chosen_w = mw;
                 chosen_h = mh;
             }
-            cursor += bytes;
+            cursor += level_bytes;
         }
         if (chosen.empty() && !(target_w == 0))
         {
