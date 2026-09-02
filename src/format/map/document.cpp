@@ -68,6 +68,30 @@ namespace format
                 position++;
         }
 
+        // a brace is structural only when it stands alone on its line
+        // valve 220 texture names are unquoted, so "{IVY02" would open a block
+        // and swallow every entity after it
+        bool brace_alone_on_line(const std::string &text, std::size_t at)
+        {
+            for (std::size_t i = at; i > 0; i--)
+            {
+                const char c = text[i - 1];
+                if (c == '\n')
+                    break;
+                if (c != ' ' && c != '\t' && c != '\r')
+                    return false;
+            }
+            for (std::size_t j = at + 1; j < text.size(); j++)
+            {
+                const char c = text[j];
+                if (c == '\n')
+                    break;
+                if (c != ' ' && c != '\t' && c != '\r')
+                    return false;
+            }
+            return true;
+        }
+
         void skip_space_and_comments(
             const std::string &text, std::size_t &position, std::size_t end)
         {
@@ -377,7 +401,7 @@ namespace format
             skip_space_and_comments(text, position, text.size());
             if (position >= text.size())
                 break;
-            if (text[position] != '{')
+            if (text[position] != '{' || !brace_alone_on_line(text, position))
             {
                 position++;
                 continue;
@@ -402,9 +426,11 @@ namespace format
                 }
                 if (c == '"')
                     in_quote = !in_quote;
-                else if (!in_quote && c == '{')
+                else if (!in_quote && c == '{'
+                         && brace_alone_on_line(text, position))
                     depth++;
-                else if (!in_quote && c == '}' && --depth == 0)
+                else if (!in_quote && c == '}'
+                         && brace_alone_on_line(text, position) && --depth == 0)
                 {
                     position++;
                     out.push_back({

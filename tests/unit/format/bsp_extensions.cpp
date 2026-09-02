@@ -126,4 +126,34 @@ suite("unit.format.bsp_extensions")
         expect(edited.find("\"rad_bounce\" \"8\"") != std::string::npos);
         expect(edited.find("\"USED\" \"1 2 3\"") != std::string::npos);
     }
+
+    test("a masked texture name does not open a block")
+    {
+        // valve 220 carries the texture name unquoted, so "{IVY02" looks like a
+        // nested block to a plain character scan and swallows everything after
+        // it. bhop_futile_fix uses five masked textures, and its
+        // info_compile_parameters was silently ignored because of this.
+        std::string source =
+            "{\n\"classname\" \"worldspawn\"\n"
+            "{\n( 0 0 0 ) ( 1 0 0 ) ( 0 1 0 ) {IVY02 [ 1 0 0 0 ] "
+            "[ 0 1 0 0 ] 0 1 1\n}\n"
+            "{\n( 0 0 0 ) ( 1 0 0 ) ( 0 1 0 ) {DECAL_POSTERS1 [ 1 0 0 0 ] "
+            "[ 0 1 0 0 ] 0 1 1\n}\n}\n"
+            "{\n\"classname\" \"info_compile_parameters\"\n"
+            "\"rad_colourscale\" \"9 9 9\"\n}\n";
+
+        const auto parsed = format::parse_map_source_entities(source);
+        require(parsed.size() == 2);
+        expect(std::string(parsed[0].keyvalues.value("classname"))
+               == "worldspawn");
+        expect(std::string(parsed[1].keyvalues.value("classname"))
+               == "info_compile_parameters");
+        expect(std::string(parsed[1].keyvalues.value("rad_colourscale"))
+               == "9 9 9");
+
+        // and the entity is still addressable for erase/append
+        format::erase_map_entities(source, {"info_compile_parameters"});
+        expect(source.find("rad_colourscale") == std::string::npos);
+        expect(source.find("{IVY02") != std::string::npos);
+    }
 }
