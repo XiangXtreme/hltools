@@ -65,6 +65,7 @@ namespace decompile
             // is a different key from source's prop fade distances below.
             "vrad_brush_cast_shadows", "disableshadows", "disablereceiveshadows",
             "disableflashlight", "shadowcastdist", "screenspacefade",
+            "disableshadowdepth", "shadowdepthnocache", "drawinfastreflection",
             "fademindist", "fademaxdist", "fadescale",
             "mindxlevel", "maxdxlevel", "MinDXLevel", "MaxDXLevel",
             "mincpulevel", "maxcpulevel", "mingpulevel", "maxgpulevel",
@@ -77,6 +78,10 @@ namespace decompile
             "_fifty_percent_distance", "_zero_percent_distance",
             // physics properties with no goldsrc analogue
             "physdamagescale", "nodamageforces", "massScale", "inertiaScale",
+            // source-only trigger controls; goldsrc's CBaseTrigger reads
+            // neither, and a teleport there always uses the destination's
+            // own angles
+            "CheckDestIfClearForPlayer", "UseLandmarkAngles",
         };
 
         void strip_dead_keys(format::entity &entity)
