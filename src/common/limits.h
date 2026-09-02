@@ -12,7 +12,7 @@ namespace limits
     constexpr int max_map_entstring = 2048 * 1024;
 
     constexpr int max_map_planes = 32768;
-    constexpr int max_internal_map_planes = 256 * 1024;
+    constexpr int max_internal_map_planes = 1024 * 1024;
     constexpr int max_map_nodes = 32767;
     constexpr int max_map_clipnodes = 32767;
     constexpr int max_map_leafs = 32760;
