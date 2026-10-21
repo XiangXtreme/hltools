@@ -8,6 +8,7 @@
 #include "../common/string_util.h"
 #include "brush_union.h"
 #include "hull_file.h"
+#include "studio_bsp.h"
 
 namespace csg
 {
@@ -105,6 +106,12 @@ namespace csg
         if (brush_options.only_entities)
             return result;
 
+        // zhlt_studiobsp: replace studio model point entities with baked
+        // world-space detail brushes before anything walks the brush lists.
+        // the skins are embedded by the miptex pass below.
+        std::vector<format::mip_texture> studio_textures =
+            inject_studio_brushes(result.map, options.wad.map_path);
+
         // sequential (the plane store is shared and mutated in order, so this
         // pass is not parallelized); one live bar over the entities
         progress::section("processing");
@@ -129,7 +136,12 @@ namespace csg
                           (double)warning.percent);
         }
 
-        miptex_build_result miptex = build_miptex_lump(result.map, result.texinfos, options.wad);
+        miptex_build_result miptex;
+        {
+            wad_build_options wad_options = options.wad;
+            wad_options.embedded_textures = &studio_textures;
+            miptex = build_miptex_lump(result.map, result.texinfos, wad_options);
+        }
         result.textures = std::move(miptex.textures);
         result.temp_wad = std::move(miptex.temp_wad);
         for (int i = 0; i < (int)miptex.texinfo_miptex.size(); i++)

@@ -127,8 +127,12 @@ namespace csg
     class plane_store
     {
     public:
-        int find_int_plane(const math::vec3v &normal, const math::vec3v &origin);
-        int plane_from_points(const math::vec3v &p0, const math::vec3v &p1, const math::vec3v &p2);
+        // no_merge allocates a fresh plane, used when exactness matters more
+        // than keeping the plane count down (generated studio prisms)
+        int find_int_plane(const math::vec3v &normal, const math::vec3v &origin,
+                           bool no_merge = false);
+        int plane_from_points(const math::vec3v &p0, const math::vec3v &p1,
+                              const math::vec3v &p2, bool exact = false);
 
         const std::vector<brush_plane> &planes() const {
             return planes_;

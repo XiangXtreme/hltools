@@ -438,6 +438,28 @@ namespace csg
     {
         std::vector<loaded_wad> wads = load_wads(collect_wad_paths(map, options));
 
+        // generated studio textures are prepended so choose_texture's
+        // non-runtime preference makes them win over wad files of the same name
+        if (options.embedded_textures && !options.embedded_textures->empty())
+        {
+            loaded_wad generated;
+            generated.path.path = "<generated studio textures>";
+            generated.path.runtime = false;
+            for (const format::mip_texture &texture : *options.embedded_textures)
+            {
+                format::wad_lump lump;
+                lump.type = format::wad_miptex_type;
+                lump.size = (int)texture.data.size();
+                lump.disksize = lump.size;
+                std::memcpy(lump.name, texture.name.c_str(),
+                            std::min(texture.name.size(), sizeof(lump.name) - 1));
+                lump.data = texture.data;
+                generated.path.total_textures++;
+                generated.file.add_lump(std::move(lump));
+            }
+            wads.insert(wads.begin(), std::move(generated));
+        }
+
         std::vector<miptex_entry> entries;
         std::vector<int> texinfo_miptex(texinfos.entries().size(), -1);
         for (int i = 0; i < (int)texinfos.entries().size(); i++)

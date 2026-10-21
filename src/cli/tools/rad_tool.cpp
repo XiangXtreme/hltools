@@ -474,9 +474,10 @@ namespace tools
                 "  zhlt_embedlightmapresolution <n> 1, 2, 4, 8 or 16 (default: 1)\n"
                 "  Texture names beginning %%<0..255> also set a per-face minlight.\n"
                 "\n"
-                "recognized but unavailable\n"
-                "  env_static and zhlt_studioshadow request studio-model shadows, which\n"
-                "  are not implemented yet; -nostudioshadow explicitly ignores those shadows.\n");
+                "studio model shadows\n"
+                "  env_static and zhlt_studioshadow make a studiomodel block light.\n"
+                "  zhlt_shadowmode 0 tests the triangle bounds, 1 tests each triangle\n"
+                "  with masked skin support (default), 2 currently shares 1's test.\n");
         }
     }
 

@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "../common/types.h"
+#include "format/miptex/texture.h"
 #include "map_parser.h"
 #include "textures.h"
 
@@ -21,6 +22,11 @@ namespace csg
         std::string wad_cfg_file;
         std::string wad_config_name;
         std::string map_path;
+
+        // generated textures (studio model skins baked by zhlt_studiobsp) that
+        // take precedence over wad files with the same name and are never
+        // recorded in worldspawn's wad key
+        const std::vector<format::mip_texture> *embedded_textures = nullptr;
     };
 
     struct miptex_build_result

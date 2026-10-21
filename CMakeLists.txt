@@ -180,6 +180,7 @@ add_library(hltools_format STATIC
     src/format/bsp/entity_lump.cpp
     src/format/bsp/face_extents.cpp
     src/format/bsp/file.cpp
+    src/format/bsp/hull_geometry.cpp
     src/format/bsp/lightmap_atlas.cpp
     src/format/bsp/texture_lump.cpp
     src/format/bsp/usage_chart.cpp
@@ -189,6 +190,7 @@ add_library(hltools_format STATIC
     src/format/image/resample.cpp
     src/format/map/document.cpp
     src/format/mdl/goldsrc/model.cpp
+    src/format/mdl/goldsrc/read.cpp
     src/format/mdl/source/model.cpp
     src/format/miptex/texture.cpp
     src/format/phy/source/model.cpp
@@ -260,6 +262,7 @@ add_library(hltools_csg STATIC
     src/csg/hull_file.cpp
     src/csg/map_parser.cpp
     src/csg/map_post.cpp
+    src/csg/studio_bsp.cpp
     src/csg/textures.cpp
     src/csg/wad_path.cpp
 )
@@ -421,6 +424,8 @@ add_executable(hltools
     src/cli/tools/wad_tool.cpp
     src/cli/tools/decompile_tool.cpp
     src/cli/tools/model_tool.cpp
+    src/cli/tools/ripent_tool.cpp
+    src/cli/tools/inspect_tool.cpp
 )
 target_link_libraries(hltools PRIVATE hltools_csg hltools_bsp hltools_vis hltools_rad
     hltools_decompile hltools_port hltools_model hltools_compile_parameters)

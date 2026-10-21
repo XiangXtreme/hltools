@@ -79,6 +79,9 @@ add_hltools_unit(unit_format
         unit/format/chunk_skins.cpp
         unit/format/entity_lump.cpp
         unit/format/mdl/goldsrc.cpp
+        unit/format/bsp_hull_geometry.cpp
+        unit/format/bsp_texture_lump.cpp
+        unit/format/mdl/goldsrc_read.cpp
         unit/format/quantize.cpp
         unit/format/rad_file.cpp
         unit/format/resample.cpp
@@ -125,6 +128,7 @@ add_hltools_unit(unit_csg
     SOURCES
         unit/csg/map_post.cpp
         unit/csg/map_parser.cpp
+        unit/csg/studio_bsp.cpp
         unit/csg/textures.cpp
     LIBRARIES hltools_csg
     LABEL unit.csg)
@@ -133,6 +137,7 @@ add_hltools_unit(unit_rad
     PREFIX "unit.rad."
     SOURCES
         unit/rad/options.cpp
+        unit/rad/studio_shadow.cpp
         unit/rad/unlit_textures.cpp
         ../src/cli/tools/rad_tool.cpp
     LIBRARIES hltools_rad hltools_compile_parameters

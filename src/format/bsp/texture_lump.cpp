@@ -16,6 +16,54 @@ namespace format
         }
     }
 
+    std::vector<std::string> bsp_texture_names(const std::vector<byte> &lump)
+    {
+        std::vector<std::string> names;
+        if (lump.size() < sizeof(int))
+            return names;
+        std::int32_t count = 0;
+        std::memcpy(&count, lump.data(), sizeof(count));
+        if (count < 0 || (std::size_t)count > (lump.size() - sizeof(int)) / sizeof(int))
+            return names;
+        names.resize((std::size_t)count);
+        for (int i = 0; i < count; i++)
+        {
+            std::int32_t offset = 0;
+            std::memcpy(&offset, lump.data() + sizeof(int) + (std::size_t)i * sizeof(int),
+                        sizeof(offset));
+            if (offset < 0 || (std::size_t)offset + sizeof(miptex_t) > lump.size())
+                continue;
+            miptex_t header;
+            std::memcpy(&header, lump.data() + (std::size_t)offset, sizeof(header));
+            char name[max_miptex_name + 1] = {};
+            std::memcpy(name, header.name, max_miptex_name);
+            names[(std::size_t)i] = name;
+        }
+        return names;
+    }
+
+    std::vector<byte> build_texture_lump(const std::vector<mip_texture> &textures)
+    {
+        std::vector<byte> out;
+        const std::size_t header = sizeof(int) + textures.size() * sizeof(int);
+        out.reserve(header);
+        auto append_i32 = [&out](int value) {
+            const byte *bytes = reinterpret_cast<const byte *>(&value);
+            out.insert(out.end(), bytes, bytes + sizeof(value));
+        };
+        append_i32((int)textures.size());
+        for (std::size_t i = 0; i < textures.size(); i++)
+            append_i32(0);
+        for (std::size_t i = 0; i < textures.size(); i++)
+        {
+            const int offset = (int)out.size();
+            std::memcpy(out.data() + sizeof(int) + i * sizeof(int), &offset, sizeof(offset));
+            const std::vector<byte> &data = textures[i].data;
+            out.insert(out.end(), data.begin(), data.end());
+        }
+        return out;
+    }
+
     bool collect_bsp_textures(const map_data &map, std::vector<mip_texture> &textures,
                               std::vector<std::string> *external, std::string *error)
     {

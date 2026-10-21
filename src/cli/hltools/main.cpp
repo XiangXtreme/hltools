@@ -12,6 +12,8 @@
 #include "../tools/wad_tool.h"
 #include "../tools/decompile_tool.h"
 #include "../tools/model_tool.h"
+#include "../tools/ripent_tool.h"
+#include "../tools/inspect_tool.h"
 #include "compile.h"
 
 // hltools: single-binary goldsrc map and asset toolchain
@@ -39,7 +41,8 @@ namespace
             "  bsp pack     collect a BSP's resources and generate its .res file\n"
             "  bsp port     port a Source BSP to GoldSrc MAP and assets\n"
             "  lightmap     export compiled lightmaps as a 24-bit bmp atlas\n"
-            "  ripent       import / export the entity lump                  (planned)\n"
+            "  ripent       import / export entities and embedded textures\n"
+            "  inspect      report bsp or studio model structure, optional obj\n"
             "  decompile    restore or reconstruct a GoldSrc Valve 220 MAP\n"
             "\n"
             "assets\n"
@@ -102,10 +105,9 @@ int main(int argc, char **argv)
         return tools::run_model_tool(sub_argc, sub_argv.data());
 
     if (str::iequals(command, "ripent"))
-    {
-        logging::console("hltools %s: planned, not available yet\n", command);
-        return 1;
-    }
+        return tools::run_ripent_tool(sub_argc, sub_argv.data());
+    if (str::iequals(command, "inspect"))
+        return tools::run_inspect_tool(sub_argc, sub_argv.data());
 
     logging::console("hltools: unknown command '%s'\nrun 'hltools' for the command list\n",
                      command);

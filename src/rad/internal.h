@@ -11,6 +11,7 @@
 #include "../common/types.h"
 #include "format/bsp/data.h"
 #include "format/bsp/entity_lump.h"
+#include "format/mdl/studio_model.h"
 #include "format/wad/archive.h"
 #include "../math/vector.h"
 #include "../math/winding.h"
@@ -249,6 +250,31 @@ namespace rad
         int style;
         // the entity cannot be seen inside, so samples must move outside of it
         bool block;
+    };
+
+    // ===== opaque studio models =====
+
+    // one textured triangle of a studio model shadow mesh, already placed in
+    // world space. traces test triangles, not the source model hierarchy, so
+    // the source vertex and index data is dropped after this is built.
+    struct studio_shadow_triangle
+    {
+        vec3v p[3];
+        vec3v uv[3];
+        int texture = 0; // index into studio_shadow_model::textures
+        vec3v mins;
+        vec3v maxs;
+    };
+
+    struct studio_shadow_model
+    {
+        std::vector<studio_shadow_triangle> triangles;
+        // the model's own skins, kept because masked faces need the palette
+        // index at the hit point to decide whether the face blocks light
+        std::vector<format::studio_texture> textures;
+        vec3v mins;
+        vec3v maxs;
+        int trace_mode = 1;
     };
 
     // ===== textures =====
@@ -550,6 +576,7 @@ namespace rad
 
         // opaque studio models loaded by studiocpp; the count gates the
         // opaque segment tests in the sample gather
+        std::vector<studio_shadow_model> studio_models;
         int num_studio_models = 0;
 
         // the single stage wide lock, standing in for the reference threadlock
@@ -716,6 +743,10 @@ namespace rad
     void load_studio_models(rad_state &state);
     void free_studio_models(rad_state &state);
     bool test_segment_against_studio_list(const rad_state &state, const vec3v &p1, const vec3v &p2);
+    // the per model trace, exposed so the shadow contract can be tested without
+    // a compiled map
+    bool test_segment_against_studio_model(const studio_shadow_model &model,
+                                           const vec3v &p1, const vec3v &p2);
 
     // ===== lightmapcpp =====
 

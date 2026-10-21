@@ -82,6 +82,9 @@ namespace csg
         int clipnode_detail_level = 0;
         int coplanar_priority = 0;
         content contents = content::empty;
+        // generated studio prisms can be much smaller than a hand drawn brush,
+        // so the face area cull uses a stricter threshold for them
+        bool generated_studio = false;
         std::string hull_shapes[num_hulls];
     };
 

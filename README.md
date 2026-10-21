@@ -26,7 +26,8 @@ Under development. Bugs, incomplete behavior and output differences may still oc
 | `hltools wad` | Complete | List, extract and build WAD3 texture archives; accepts WAD or BSP input |
 | `hltools lightmap` | Complete | Export all face lightmaps and styles to a deterministic 24-bit BMP atlas |
 | `hltools decompile` | Complete | Restore or reconstruct GoldSrc BSPs as Valve 220 MAP files |
-| `hltools ripent` | Planned | Import and export entity and texture lumps |
+| `hltools ripent` | Complete | Export and import entity lumps and embedded textures as WAD3 |
+| `hltools inspect` | Complete | Report BSP or studio model structure and export hull 0 geometry as OBJ |
 | `hltools model` | Available | Convert Source studio models and build full-resolution GoldSrc skybox models |
 
 The CPU compiler stages preserve reference compiler behavior across real maps and feature fixtures. GPU RAD is deliberately approximate; see [Accuracy and compatibility](#accuracy-and-compatibility).
@@ -467,7 +468,7 @@ Shadows, files and diagnostics:
 |---|---|
 | `-noopaque` | Disable opaque brush entity shadows |
 | `-blockopaque <value>` | Toggle opaque model volume blocking with `0` or `1`; default on |
-| `-nostudioshadow` | Explicitly ignore unavailable studio model shadows |
+| `-nostudioshadow` | Ignore studio model shadows for this compile |
 | `-customshadowwithbounce` | Apply custom shadow transmission to bounced light |
 | `-rgbtransfers` | Preserve colored shadow transfers at higher memory cost |
 | `-nospread` | Disable sunlight spread |
@@ -497,6 +498,28 @@ hltools bsp info maps/example.bsp
 The report includes completed compiler stages, entities, embedded and external textures, WAD references, lightmap atlas usage and every BSP lump against its engine limit.
 
 Atlas usage comes with the per-texture breakdown, ranked by lightmap footprint. RAD prints the same table only when a map is close to overflowing; `bsp info` prints it at any usage, so a map sitting well inside the budget still shows which texture is spending it.
+
+### `ripent`
+
+```powershell
+hltools ripent -export maps/example.bsp
+hltools ripent -import maps/example.bsp
+hltools ripent -textureexport maps/example.bsp [-out textures.wad]
+hltools ripent -textureimport maps/example.bsp [-in textures.wad]
+```
+
+`-export` writes the entity lump to `maps/example.ent`; `-import` reads it back and rewrites only the entity lump, so every other lump stays byte identical. `-textureexport` writes the embedded miptex set as a WAD3 archive (`<map>_textures.wad` by default), and `-textureimport` replaces the texture lump from that archive and remaps every texinfo by name.
+
+Texture import requires the WAD to contain every texture the BSP references; an external texture that is missing from the WAD aborts the import instead of leaving a dangling index.
+
+### `inspect`
+
+```powershell
+hltools inspect maps/example.bsp
+hltools inspect models/example.mdl -obj export.obj
+```
+
+For a BSP the report covers lumps, entities, models, hull 0 geometry and the textures that own the most faces; `-obj` writes every model's hull 0 polygons as OBJ groups named `model_N`. For a GoldSrc MDL it lists bones, sequences, skins, meshes, vertex and triangle counts and bounds; `-obj` writes frame 0 triangles with the skin name as the material.
 
 ### `bsp pack`
 
@@ -886,6 +909,34 @@ Each key except `classname` and `origin` is a texture name.
 | `zhlt_embedlightmap <0..1>` | A nonzero value bakes face lightmaps into generated textures | `0` |
 | `zhlt_embedlightmapresolution <n>` | Selects an embedded texture resolution of `1`, `2`, `4`, `8` or `16` | `1` |
 
+#### Studio model shadows
+
+| Entity or key | Effect | Default |
+|---|---|---|
+| `env_static` | Makes the entity's `model` block light. `spawnflags` bit `4` disables it | Off |
+| `zhlt_studioshadow <0\|1>` | Makes any entity with a `model` key block light | `0` |
+| `zhlt_shadowmode <0..2>` | `0` tests each triangle's bounds, `1` tests every triangle and honors masked skins, `2` currently shares `1` | `1` |
+| `body`, `skin` | Select the bodypart model and skin family used for the shadow mesh | `0` |
+| `scale`, `xform <x y z>` | Place the shadow mesh at a uniform or per-axis scale, clamped to `0.01..16` | `1` |
+
+Models resolve against the game directory (the parent of the map's directory), then the map directory, the working directory and each `-waddir` folder. A masked skin lets light through where the sampled palette index is `255`; additive skins never block. `-nostudioshadow` ignores every request.
+
+#### Studio model BSP
+
+A point entity carrying `zhlt_studiobsp` is replaced by solid geometry baked from its `model`, so the prop becomes part of the map instead of a runtime model.
+
+| Entity or key | Effect | Default |
+|---|---|---|
+| `zhlt_studiobsp <0\|1>` | Bakes the entity's `model` into a `func_wall` of five-sided detail brush prisms, one per triangle | `0` |
+| `zhlt_studiobsp_collision <0\|1>` | Builds clip hulls `1..3`; `0` leaves render geometry only | `1` |
+| `zhlt_studiobsp_doublesided <0\|1>` | Accepted for compatibility; brush prisms are always closed and textured on all five sides | `1` |
+| `zhlt_studiobsp_thickness <n>` | Prism depth in world units, clamped to `0.01..512` | `1` |
+| `zhlt_studiobsp_world <0\|1>` | Adds the prisms to `worldspawn` and turns the marker into `info_null` | `0` |
+
+`body`, `skin`, `scale` and `xform` select the pose and placement exactly like studio shadows. The generated brushes are detail brushes (`detail_level` and `clipnode_detail_level` `1`) and get `zhlt_lightflags` bit `2`, so VIS does not split on them while RAD still treats them as opaque. Every skin is resampled to a legal BSP size (a multiple of `16`, at most `512`), embedded into the miptex lump and named with a unique hash suffix of at most 15 characters; masked skins keep the `{` prefix.
+
+Brush baking is meant for props that fit the map's brush, plane and clipnode budgets. Converted geometry counts against all of them: a 900-triangle model produces 900 brushes, 4,500 sides and roughly 10,000 planes, so very dense models should stay runtime entities or use fewer triangles. A model with no embedded skins is rejected with a warning, and triangles whose normal or texture projection cannot be built are counted and skipped.
+
 </details>
 
 ## Console and log output
@@ -938,9 +989,8 @@ reproduces the less conservative centroid selection, while
 
 ## What remains
 
-- Implement `hltools ripent` for importing and exporting entity lumps and embedded textures.
 - Implement GoldSrc QC/SMD compilation and decompilation under `hltools model`; `model convert` writes binary `.mdl` directly and has no QC/SMD path.
-- Implement studio model shadows requested by `env_static` and `zhlt_studioshadow`.
+- Make RAD `zhlt_shadowmode 2` use the reference's progressive simplification and expanded-facet test instead of the shared triangle test.
 - Implement VIS `-maxdistance`; it is recognized today but fails explicitly.
 - Parallelize useful BSP work; `-threads` configures the shared pool, but most BSP processing is still serial.
 - Continue expanding compiler fixtures, complete pipeline maps, regression cases and automated test coverage.

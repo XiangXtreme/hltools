@@ -1227,19 +1227,23 @@ namespace csg
         return contents;
     }
 
-    int plane_store::find_int_plane(const math::vec3v &normal, const math::vec3v &origin)
+    int plane_store::find_int_plane(const math::vec3v &normal, const math::vec3v &origin,
+                                    bool no_merge)
     {
-        for (int i = 0; i < (int)planes_.size(); i++)
+        if (!no_merge)
         {
-            const brush_plane &plane = planes_[(size_t)i];
-            vec_t t;
-            if (-math::dir_epsilon < (t = normal.x - plane.normal.x) && t < math::dir_epsilon
-                && -math::dir_epsilon < (t = normal.y - plane.normal.y) && t < math::dir_epsilon
-                && -math::dir_epsilon < (t = normal.z - plane.normal.z) && t < math::dir_epsilon)
+            for (int i = 0; i < (int)planes_.size(); i++)
             {
-                t = math::dot(origin, plane.normal) - plane.dist;
-                if (-dist_epsilon < t && t < dist_epsilon)
-                    return i;
+                const brush_plane &plane = planes_[(size_t)i];
+                vec_t t;
+                if (-math::dir_epsilon < (t = normal.x - plane.normal.x) && t < math::dir_epsilon
+                    && -math::dir_epsilon < (t = normal.y - plane.normal.y) && t < math::dir_epsilon
+                    && -math::dir_epsilon < (t = normal.z - plane.normal.z) && t < math::dir_epsilon)
+                {
+                    t = math::dot(origin, plane.normal) - plane.dist;
+                    if (-dist_epsilon < t && t < dist_epsilon)
+                        return i;
+                }
             }
         }
 
@@ -1282,16 +1286,44 @@ namespace csg
         return return_value;
     }
 
-    int plane_store::plane_from_points(const math::vec3v &p0, const math::vec3v &p1, const math::vec3v &p2)
+    int plane_store::plane_from_points(const math::vec3v &p0, const math::vec3v &p1,
+                                       const math::vec3v &p2, bool exact)
     {
         math::vec3v v1, v2;
         math::subtract(p0, p1, v1);
         math::subtract(p2, p1, v2);
         math::vec3v normal;
         math::cross(v1, v2, normal);
-        if (math::normalize(normal))
-            return find_int_plane(normal, p0);
-        return -1;
+        if (!math::normalize(normal))
+            return -1;
+
+        if (exact)
+        {
+            // a generated studio prism is smaller than the plane merge
+            // tolerances, so only reuse a plane that all three of its points
+            // actually lie on; otherwise a nearby plane tilts the brush
+            for (int i = 0; i < (int)planes_.size(); i++)
+            {
+                const brush_plane &plane = planes_[(std::size_t)i];
+                if (math::dot(plane.normal, normal) < (vec_t)0.999999)
+                    continue;
+                const math::vec3v points[3] = {p0, p1, p2};
+                bool on_plane = true;
+                for (const math::vec3v &point : points)
+                {
+                    if (std::fabs(math::dot(point, plane.normal) - plane.dist)
+                        > (vec_t)1e-6)
+                    {
+                        on_plane = false;
+                        break;
+                    }
+                }
+                if (on_plane)
+                    return i;
+            }
+            return find_int_plane(normal, p0, true);
+        }
+        return find_int_plane(normal, p0);
     }
 
     std::vector<brush_face> make_brush_planes(map_source &map,
@@ -1309,7 +1341,8 @@ namespace csg
             for (int j = 0; j < 3; j++)
                 math::subtract(side.planepts[j], origin, side.planepts[j]);
 
-            int planenum = planes.plane_from_points(side.planepts[0], side.planepts[1], side.planepts[2]);
+            int planenum = planes.plane_from_points(side.planepts[0], side.planepts[1],
+                                                    side.planepts[2], brush.generated_studio);
             if (planenum == -1)
             {
                 err::fatal("entity %i, brush %i, side %i: plane with no normal",
@@ -1351,6 +1384,10 @@ namespace csg
     {
         sort_sides(faces, planes);
 
+        // slivers from generated studio geometry are legitimate parts of the
+        // model, while the same area on a hand drawn brush is a map error
+        const vec_t minimum_area = brush.generated_studio ? (vec_t)1e-4 : (vec_t)0.1;
+
     restart:
         math::bounding_box bounds;
 
@@ -1370,7 +1407,7 @@ namespace csg
             }
 
             winding.remove_colinear_points();
-            if (winding.area() < (vec_t)0.1)
+            if (winding.area() < minimum_area)
             {
                 faces.erase(faces.begin() + i);
                 goto restart;

@@ -37,6 +37,13 @@ namespace format
         }
         const wad_lump *find_texture(const char *name) const;
 
+        // add an already decoded texture to this in-memory archive, used to
+        // feed generated studio model skins into the miptex builder without a
+        // temporary wad on disk
+        void add_lump(wad_lump lump) {
+            lumps_.push_back(std::move(lump));
+        }
+
     private:
         std::string path_;
         std::vector<wad_lump> lumps_;
