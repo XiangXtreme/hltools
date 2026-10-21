@@ -969,6 +969,15 @@ python tools/gather_diff.py reference.gather candidate.gather
 
 The scripts require Python 3 and NumPy. The `lightmap` command provides a fast visual companion to these numeric comparisons.
 
+Studio model shadows were compared against sdHLT 1.2.0 on a room with one `env_static` model:
+
+| Mode | Result |
+|---|---|
+| `zhlt_shadowmode 1` | Lighting lump byte-identical (634 faces, 432,579 bytes) |
+| `zhlt_shadowmode 2` | Same structure (1,306 -> 718 vertices, 498 vs 499 triangles) but about 11% of luxels differ; progressive-mesh collapse tie-breaking is sensitive to arithmetic order, so numeric parity is not guaranteed |
+
+The sdHLT `zhlt_studiobsp` shell path requires a closed surface and rejects open models with `cannot form a closed BSP shell`, while `hltools` bakes every triangle as a five-sided prism; open models that sdHLT refuses may still compile here.
+
 ### Remove a TrenchBroom group volume
 
 `tools/remove_map_group_volume.py` treats a named TrenchBroom group containing

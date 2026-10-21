@@ -393,6 +393,13 @@ namespace rad
 
                 const simplified_mesh simplified =
                     simplify_shadow_mesh(positions, triangles);
+                if (simplified.positions.size() != positions.size())
+                {
+                    logging::info("  %-14s %s: %d -> %d verts, %d tris\n", "simplified",
+                                  source.name.c_str(), (int)positions.size(),
+                                  (int)simplified.positions.size(),
+                                  (int)simplified.triangles.size());
+                }
                 build_facets(out, simplified.positions, simplified.triangles);
                 for (const studio_shadow_triangle &triangle : out.triangles)
                 {

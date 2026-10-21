@@ -15,7 +15,7 @@ namespace rad
             int id = 0;
             std::vector<int> neighbors;
             std::vector<int> faces;
-            double cost = 0.0;
+            float cost = 0.0f;
             int collapse = -1;
             bool alive = true;
         };
@@ -55,6 +55,27 @@ namespace rad
                 || triangle.v[2] == vertex;
         }
 
+        // mirrors the reference VectorLength macro: float products accumulated
+        // in double, one double sqrt
+        float vector_length(const math::vec3v &v)
+        {
+            return (float)std::sqrt((double)((double)(v.x * v.x) + (double)(v.y * v.y)
+                                              + (double)(v.z * v.z)));
+        }
+
+        // mirrors VectorNormalize: float dot, double sqrt, double division
+        void normalize_vector(math::vec3v &v)
+        {
+            const double length = std::sqrt((double)math::dot(v, v));
+            if (length < 1e-5)
+            {
+                v = math::vec3v{};
+                return;
+            }
+            v = math::vec3v{(vec_t)(v.x / length), (vec_t)(v.y / length),
+                            (vec_t)(v.z / length)};
+        }
+
         void compute_normal(pm_triangle &triangle, const std::vector<pm_vertex> &vertices)
         {
             const math::vec3v a = vertices[(std::size_t)triangle.v[1]].position
@@ -62,10 +83,8 @@ namespace rad
             const math::vec3v b = vertices[(std::size_t)triangle.v[2]].position
                 - vertices[(std::size_t)triangle.v[1]].position;
             math::vec3v normal = math::cross(a, b);
-            const double length = math::length(normal);
-            triangle.normal = length > 0.0
-                ? normal * (vec_t)(1.0 / length)
-                : math::vec3v{};
+            normalize_vector(normal);
+            triangle.normal = normal;
         }
 
         void remove_if_non_neighbor(pm_state &state, int u, int n)
@@ -121,20 +140,22 @@ namespace rad
             }
             for (int i = 0; i < 3; i++)
             {
-                add_unique(state.vertices[(std::size_t)triangle.v[i]].neighbors,
-                           triangle.v[(i + 1) % 3]);
-                add_unique(state.vertices[(std::size_t)triangle.v[i]].neighbors,
-                           triangle.v[(i + 2) % 3]);
+                for (int j = 0; j < 3; j++)
+                {
+                    if (i != j)
+                        add_unique(state.vertices[(std::size_t)triangle.v[i]].neighbors,
+                                   triangle.v[j]);
+                }
             }
             compute_normal(triangle, state.vertices);
         }
 
-        double edge_collapse_cost(const pm_state &state, int u, int v)
+        float edge_collapse_cost(const pm_state &state, int u, int v)
         {
             const math::vec3v edge = state.vertices[(std::size_t)v].position
                 - state.vertices[(std::size_t)u].position;
-            const double edge_length = math::length(edge);
-            double curvature = 0.0;
+            const float edge_length = vector_length(edge);
+            float curvature = 0.0f;
 
             std::vector<int> sides;
             for (int face : state.vertices[(std::size_t)u].faces)
@@ -147,13 +168,13 @@ namespace rad
             {
                 const math::vec3v &normal_a =
                     state.triangles[(std::size_t)face_a].normal;
-                double min_curv = 1.0;
+                float min_curv = 1.0f;
                 for (int face_b : sides)
                 {
                     const math::vec3v &normal_b =
                         state.triangles[(std::size_t)face_b].normal;
-                    const double dot = math::dot(normal_a, normal_b);
-                    min_curv = std::min(min_curv, (1.0 - dot) * 0.5);
+                    const float dot = math::dot(normal_a, normal_b);
+                    min_curv = std::min(min_curv, (1.0f - dot) * 0.5f);
                 }
                 curvature = std::max(curvature, min_curv);
             }
@@ -166,14 +187,14 @@ namespace rad
             if (vertex.neighbors.empty())
             {
                 vertex.collapse = -1;
-                vertex.cost = -0.01;
+                vertex.cost = -0.01f;
                 return;
             }
-            vertex.cost = 1e6;
+            vertex.cost = 1000000.0f;
             vertex.collapse = -1;
             for (int neighbor : vertex.neighbors)
             {
-                const double cost = edge_collapse_cost(state, index, neighbor);
+                const float cost = edge_collapse_cost(state, index, neighbor);
                 if (cost < vertex.cost)
                 {
                     vertex.cost = cost;
@@ -276,12 +297,15 @@ namespace rad
             const int index = (int)state.triangles.size();
             state.triangles.push_back(triangle);
             for (int k = 0; k < 3; k++)
+                state.vertices[(std::size_t)triangle.v[k]].faces.push_back(index);
+            for (int i = 0; i < 3; i++)
             {
-                const int a = triangle.v[k];
-                const int b = triangle.v[(k + 1) % 3];
-                state.vertices[(std::size_t)a].faces.push_back(index);
-                add_unique(state.vertices[(std::size_t)a].neighbors, b);
-                add_unique(state.vertices[(std::size_t)b].neighbors, a);
+                for (int j = 0; j < 3; j++)
+                {
+                    if (i != j)
+                        add_unique(state.vertices[(std::size_t)triangle.v[i]].neighbors,
+                                   triangle.v[j]);
+                }
             }
             compute_normal(state.triangles.back(), state.vertices);
         }
