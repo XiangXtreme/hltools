@@ -306,6 +306,7 @@ add_library(hltools_rad STATIC
     src/rad/position.cpp
     src/rad/sparse.cpp
     src/rad/studio.cpp
+    src/rad/studio_simplify.cpp
     src/rad/textures.cpp
     src/rad/trace.cpp
     src/rad/transfers.cpp

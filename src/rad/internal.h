@@ -266,9 +266,29 @@ namespace rad
         vec3v maxs;
     };
 
+    // slow mode replaces the triangle soup with a simplified mesh tested as
+    // per-facet convex hulls, matching the reference's facet planes
+    struct studio_shadow_plane
+    {
+        vec3v normal;
+        vec_t dist = 0;
+        int type = 3; // 0..2 axial, 3 non axial
+        int signbits = 0;
+    };
+
+    struct studio_shadow_facet
+    {
+        vec3v mins;
+        vec3v maxs;
+        int first_plane = 0;
+        int num_planes = 0;
+    };
+
     struct studio_shadow_model
     {
         std::vector<studio_shadow_triangle> triangles;
+        std::vector<studio_shadow_plane> planes;
+        std::vector<studio_shadow_facet> facets;
         // the model's own skins, kept because masked faces need the palette
         // index at the hit point to decide whether the face blocks light
         std::vector<format::studio_texture> textures;

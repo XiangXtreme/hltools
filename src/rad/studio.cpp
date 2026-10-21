@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <string>
@@ -10,6 +11,8 @@
 #include "../common/string_util.h"
 #include "../format/mdl/goldsrc/read.h"
 #include "internal.h"
+#include "studio_facet.h"
+#include "studio_simplify.h"
 
 // opaque studio model (mdl) shadows: models named by env_static entities or
 // entities with zhlt_studioshadow block light like opaque brush entities.
@@ -141,6 +144,225 @@ namespace rad
             return false;
         }
 
+        constexpr vec_t plane_normal_epsilon = 0.00001f;
+        constexpr vec_t plane_dist_epsilon = 0.04f;
+        constexpr vec_t facet_frac_epsilon = 1.0f / 32.0f;
+        constexpr int max_facet_planes = 32;
+
+        void snap_vector(vec3v &normal)
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                if (std::fabs(normal[i] - 1.0f) < plane_normal_epsilon)
+                {
+                    normal = vec3v{};
+                    normal[i] = 1.0f;
+                    return;
+                }
+                if (std::fabs(normal[i] + 1.0f) < plane_normal_epsilon)
+                {
+                    normal = vec3v{};
+                    normal[i] = -1.0f;
+                    return;
+                }
+            }
+        }
+
+        void snap_plane(studio_shadow_plane &plane)
+        {
+            snap_vector(plane.normal);
+            const vec_t rounded = (vec_t)std::round((double)plane.dist);
+            if (std::fabs(plane.dist - rounded) < plane_dist_epsilon)
+                plane.dist = rounded;
+        }
+
+        void categorize_plane(studio_shadow_plane &plane)
+        {
+            plane.signbits = 0;
+            plane.type = 3;
+            for (int i = 0; i < 3; i++)
+            {
+                if (plane.normal[i] < 0.0f)
+                {
+                    plane.signbits |= 1 << i;
+                    if (plane.normal[i] == -1.0f)
+                    {
+                        plane.signbits = 1 << i;
+                        plane.normal = vec3v{};
+                        plane.normal[i] = -1.0f;
+                        break;
+                    }
+                }
+                else if (plane.normal[i] == 1.0f)
+                {
+                    plane.type = i;
+                    plane.signbits = 0;
+                    plane.normal = vec3v{};
+                    plane.normal[i] = 1.0f;
+                    break;
+                }
+            }
+        }
+
+        bool same_plane(const studio_shadow_plane &plane, const vec3v &normal, vec_t dist)
+        {
+            return std::fabs(plane.normal[0] - normal[0]) < plane_normal_epsilon
+                && std::fabs(plane.normal[1] - normal[1]) < plane_normal_epsilon
+                && std::fabs(plane.normal[2] - normal[2]) < plane_normal_epsilon
+                && std::fabs(plane.dist - dist) < plane_dist_epsilon;
+        }
+
+        // the reference's AddMeshTrinagle facet: front plane, the six axial
+        // bounds and edge bevels for every non axial edge
+        bool facet_planes(const vec3v p[3], vec3v mins, vec3v maxs,
+                          std::vector<studio_shadow_plane> &planes)
+        {
+            math::vec3v v1 = p[1] - p[0];
+            math::vec3v v2 = p[2] - p[0];
+            math::vec3v normal = math::cross(v2, v1);
+            const double length = math::length(normal);
+            if (length == 0.0)
+                return false;
+            normal = normal * (vec_t)(1.0 / length);
+            studio_shadow_plane main;
+            main.normal = normal;
+            main.dist = (vec_t)math::dot(p[0], normal);
+            snap_plane(main);
+            planes.push_back(main);
+
+            for (int axis = 0; axis < 3; axis++)
+            {
+                for (int direction = -1; direction <= 1; direction += 2)
+                {
+                    bool present = false;
+                    for (const studio_shadow_plane &plane : planes)
+                        present = present || plane.normal[axis] == (vec_t)direction;
+                    if (present)
+                        continue;
+                    vec3v axis_normal{};
+                    axis_normal[axis] = (vec_t)direction;
+                    studio_shadow_plane plane;
+                    plane.normal = axis_normal;
+                    plane.dist = direction == 1 ? maxs[axis] : -mins[axis];
+                    planes.push_back(plane);
+                }
+            }
+
+            for (int i = 0; i < 3; i++)
+            {
+                const int j = (i + 1) % 3;
+                math::vec3v edge = p[i] - p[j];
+                if (math::length(edge) < 0.5)
+                    continue;
+                const double edge_length = math::length(edge);
+                edge = edge * (vec_t)(1.0 / edge_length);
+                snap_vector(edge);
+                bool axial = false;
+                for (int axis = 0; axis < 3; axis++)
+                    axial = axial || edge[axis] == 1.0f || edge[axis] == -1.0f;
+                if (axial)
+                    continue;
+
+                for (int axis = 0; axis < 3; axis++)
+                {
+                    for (int direction = -1; direction <= 1; direction += 2)
+                    {
+                        vec3v reference{};
+                        reference[axis] = (vec_t)direction;
+                        math::vec3v bevel = math::cross(edge, reference);
+                        const double bevel_length = math::length(bevel);
+                        if (bevel_length < 0.5)
+                            continue;
+                        bevel = bevel * (vec_t)(1.0 / bevel_length);
+                        const vec_t dist = (vec_t)math::dot(p[i], bevel);
+
+                        bool duplicate = false;
+                        for (const studio_shadow_plane &plane : planes)
+                            duplicate = duplicate || same_plane(plane, bevel, dist);
+                        if (duplicate)
+                            continue;
+
+                        bool outer = true;
+                        for (int k = 0; k < 3 && outer; k++)
+                        {
+                            if (k == i)
+                                continue;
+                            if (math::dot(p[k], bevel) - dist > 0.1)
+                                outer = false;
+                        }
+                        if (!outer)
+                            continue;
+
+                        studio_shadow_plane plane;
+                        plane.normal = bevel;
+                        plane.dist = dist;
+                        planes.push_back(plane);
+                    }
+                }
+            }
+            return true;
+        }
+
+        void build_facets(studio_shadow_model &model,
+                          const std::vector<vec3v> &positions,
+                          const std::vector<std::array<int, 3>> &triangles)
+        {
+            model.facets.clear();
+            model.planes.clear();
+            for (const std::array<int, 3> &indices : triangles)
+            {
+                vec3v p[3];
+                vec3v mins{1e30f, 1e30f, 1e30f};
+                vec3v maxs{-1e30f, -1e30f, -1e30f};
+                bool valid = true;
+                for (int k = 0; k < 3; k++)
+                {
+                    if (indices[k] < 0 || (std::size_t)indices[k] >= positions.size())
+                    {
+                        valid = false;
+                        break;
+                    }
+                    p[k] = positions[(std::size_t)indices[k]];
+                    for (int axis = 0; axis < 3; axis++)
+                    {
+                        mins[axis] = std::min(mins[axis], p[k][axis]);
+                        maxs[axis] = std::max(maxs[axis], p[k][axis]);
+                    }
+                }
+                if (!valid)
+                    continue;
+
+                std::vector<studio_shadow_plane> planes;
+                planes.reserve(max_facet_planes);
+                if (!facet_planes(p, mins, maxs, planes) || planes.empty())
+                    continue;
+
+                studio_shadow_facet facet;
+                facet.mins = mins;
+                facet.maxs = maxs;
+                facet.first_plane = (int)model.planes.size();
+                facet.num_planes = (int)planes.size();
+                for (studio_shadow_plane &plane : planes)
+                {
+                    snap_plane(plane);
+                    categorize_plane(plane);
+                    model.planes.push_back(plane);
+                }
+                model.facets.push_back(facet);
+
+                studio_shadow_triangle triangle;
+                triangle.texture = -1;
+                triangle.mins = mins;
+                triangle.maxs = maxs;
+                for (int k = 0; k < 3; k++)
+                {
+                    triangle.p[k] = p[k];
+                    triangle.uv[k] = vec3v{};
+                }
+                model.triangles.push_back(triangle);
+            }
+        }
+
         studio_shadow_model build_shadow_model(const format::studio_model &source,
                                                const placement &place, int trace_mode)
         {
@@ -149,6 +371,47 @@ namespace rad
             out.textures = source.textures;
             out.mins = vec3v{1e30f, 1e30f, 1e30f};
             out.maxs = vec3v{-1e30f, -1e30f, -1e30f};
+
+            if (trace_mode == shadow_slow)
+            {
+                // the reference simplifies the posed mesh first and then tests
+                // the expanded facets, which ignore skins entirely
+                std::vector<vec3v> positions;
+                positions.reserve(source.vertices.size());
+                for (const format::studio_vertex &vertex : source.vertices)
+                    positions.push_back(transform_point(place, vertex.position));
+
+                std::vector<std::array<int, 3>> triangles;
+                for (const format::studio_mesh &mesh : source.meshes)
+                {
+                    for (std::size_t t = 0; t + 2 < mesh.indices.size(); t += 3)
+                    {
+                        triangles.push_back({mesh.indices[t], mesh.indices[t + 1],
+                                             mesh.indices[t + 2]});
+                    }
+                }
+
+                const simplified_mesh simplified =
+                    simplify_shadow_mesh(positions, triangles);
+                build_facets(out, simplified.positions, simplified.triangles);
+                for (const studio_shadow_triangle &triangle : out.triangles)
+                {
+                    for (int k = 0; k < 3; k++)
+                    {
+                        for (int axis = 0; axis < 3; axis++)
+                        {
+                            out.mins[axis] = std::min(out.mins[axis], triangle.p[k][axis]);
+                            out.maxs[axis] = std::max(out.maxs[axis], triangle.p[k][axis]);
+                        }
+                    }
+                }
+                if (out.triangles.empty())
+                {
+                    out.mins = vec3v{};
+                    out.maxs = vec3v{};
+                }
+                return out;
+            }
 
             for (const format::studio_mesh &mesh : source.meshes)
             {
@@ -228,6 +491,46 @@ namespace rad
                     return false;
             }
             return leave >= 0.0f;
+        }
+
+        // ray against one expanded facet (reference ClipRayToFacet). the trace
+        // hull is a point, so the corner pushes collapse to a plain dot product
+        bool clip_ray_to_facet(const studio_shadow_model &model,
+                               const studio_shadow_facet &facet, const vec3v &start,
+                               const vec3v &end)
+        {
+            double enter = -1.0;
+            double leave = 1.0;
+            bool start_outside = false;
+            for (int i = 0; i < facet.num_planes; i++)
+            {
+                const studio_shadow_plane &plane =
+                    model.planes[(std::size_t)(facet.first_plane + i)];
+                const double d1 = math::dot(start, plane.normal) - plane.dist;
+                const double d2 = math::dot(end, plane.normal) - plane.dist;
+                if (d1 > 0.0)
+                    start_outside = true;
+                if (d1 > 0.0 && d2 >= d1)
+                    return false;
+                if (d1 <= 0.0 && d2 <= 0.0)
+                    continue;
+                const double d = 1.0 / (d1 - d2);
+                const double f = d1 * d;
+                if (d > 0.0)
+                {
+                    if (f > enter)
+                        enter = f;
+                }
+                else if (d < 0.0)
+                {
+                    if (f < leave)
+                        leave = f;
+                }
+            }
+            if (!start_outside)
+                return true;
+            return (enter - (double)facet_frac_epsilon) <= leave && enter > -1.0
+                && enter < 1.0;
         }
 
         // shared masked texture test at a hit point. the palette's last index is
@@ -414,6 +717,18 @@ namespace rad
             return false;
         direction = direction * (1.0f / distance);
 
+        if (model.trace_mode == shadow_slow)
+        {
+            for (const studio_shadow_facet &facet : model.facets)
+            {
+                if (!bounds_overlap(facet.mins, facet.maxs, bounds_min, bounds_max))
+                    continue;
+                if (clip_ray_to_facet(model, facet, p1, p2))
+                    return true;
+            }
+            return false;
+        }
+
         for (const studio_shadow_triangle &triangle : model.triangles)
         {
             if (!bounds_overlap(triangle.mins, triangle.maxs, bounds_min, bounds_max))
@@ -425,10 +740,6 @@ namespace rad
             }
             else
             {
-                // the reference's slow mode simplifies the mesh first and then
-                // expands each facet by the trace width. without the
-                // simplification pass the exact same triangles are the closest
-                // match, so both modes share the face test for now.
                 if (clip_ray_to_triangle(model, triangle, p1, direction, distance))
                     return true;
             }
@@ -445,5 +756,19 @@ namespace rad
             if (test_segment_against_studio_model(model, p1, p2))
                 return true;
         return false;
+    }
+
+    void build_studio_facets(studio_shadow_model &model,
+                             const std::vector<vec3v> &positions,
+                             const std::vector<std::array<int, 3>> &triangles)
+    {
+        build_facets(model, positions, triangles);
+    }
+
+    bool clip_segment_to_facet(const studio_shadow_model &model,
+                               const studio_shadow_facet &facet, const vec3v &start,
+                               const vec3v &end)
+    {
+        return clip_ray_to_facet(model, facet, start, end);
     }
 }

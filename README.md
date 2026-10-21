@@ -915,7 +915,7 @@ Each key except `classname` and `origin` is a texture name.
 |---|---|---|
 | `env_static` | Makes the entity's `model` block light. `spawnflags` bit `4` disables it | Off |
 | `zhlt_studioshadow <0\|1>` | Makes any entity with a `model` key block light | `0` |
-| `zhlt_shadowmode <0..2>` | `0` tests each triangle's bounds, `1` tests every triangle and honors masked skins, `2` currently shares `1` | `1` |
+| `zhlt_shadowmode <0..2>` | `0` tests each triangle's bounds, `1` tests every triangle and honors masked skins, `2` simplifies the mesh to the reference vertex budget and tests expanded facets (skins are ignored, as in the reference) | `1` |
 | `body`, `skin` | Select the bodypart model and skin family used for the shadow mesh | `0` |
 | `scale`, `xform <x y z>` | Place the shadow mesh at a uniform or per-axis scale, clamped to `0.01..16` | `1` |
 
@@ -990,7 +990,6 @@ reproduces the less conservative centroid selection, while
 ## What remains
 
 - Implement GoldSrc QC/SMD compilation and decompilation under `hltools model`; `model convert` writes binary `.mdl` directly and has no QC/SMD path.
-- Make RAD `zhlt_shadowmode 2` use the reference's progressive simplification and expanded-facet test instead of the shared triangle test.
 - Implement VIS `-maxdistance`; it is recognized today but fails explicitly.
 - Parallelize useful BSP work; `-threads` configures the shared pool, but most BSP processing is still serial.
 - Continue expanding compiler fixtures, complete pipeline maps, regression cases and automated test coverage.

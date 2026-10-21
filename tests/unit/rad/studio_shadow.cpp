@@ -5,6 +5,8 @@
 #include "common/filesystem.h"
 #include "format/mdl/goldsrc/model.h"
 #include "rad/internal.h"
+#include "rad/studio_facet.h"
+#include "rad/studio_simplify.h"
 #include "support/scratch.h"
 #include "support/test.h"
 
@@ -43,6 +45,19 @@ namespace
     math::vec3v point(float x, float y, float z)
     {
         return math::vec3v{x, y, z};
+    }
+
+    rad::studio_shadow_model make_slow_model()
+    {
+        rad::studio_shadow_model model;
+        model.trace_mode = 2;
+        const std::vector<math::vec3v> positions = {point(0, 0, 0), point(8, 0, 0),
+                                                    point(0, 8, 0)};
+        const std::vector<std::array<int, 3>> triangles = {{0, 1, 2}};
+        rad::build_studio_facets(model, positions, triangles);
+        model.mins = point(0, 0, 0);
+        model.maxs = point(8, 8, 0);
+        return model;
     }
 }
 
@@ -166,5 +181,91 @@ suite("unit.rad.studio_shadow")
         rad::free_studio_models(state);
         expect(state.num_studio_models == 0);
         expect(state.studio_models.empty());
+    }
+
+    test("studio_shadow.slow mode blocks a segment through the facet")
+    {
+        const rad::studio_shadow_model model = make_slow_model();
+        require(model.facets.size() == 1);
+        expect(model.facets[0].num_planes >= 4);
+        expect(rad::test_segment_against_studio_model(model, point(1, 1, 10),
+                                                      point(1, 1, -10)));
+    }
+
+    test("studio_shadow.slow mode ignores skins")
+    {
+        rad::studio_shadow_model model = make_slow_model();
+        model.textures.resize(1);
+        model.textures[0].flags = format::studio_nf_masked;
+        model.textures[0].image.width = 2;
+        model.textures[0].image.height = 2;
+        model.textures[0].image.pixels.assign(4, 255);
+        expect(rad::test_segment_against_studio_model(model, point(1, 1, 10),
+                                                      point(1, 1, -10)));
+    }
+
+    test("studio_shadow.slow mode misses beside the facet")
+    {
+        const rad::studio_shadow_model model = make_slow_model();
+        expect_false(rad::test_segment_against_studio_model(model, point(20, 20, 10),
+                                                            point(20, 20, -10)));
+    }
+
+    test("studio_shadow.slow mode ignores a segment moving away behind the facet")
+    {
+        const rad::studio_shadow_model model = make_slow_model();
+        expect_false(rad::test_segment_against_studio_model(model, point(1, 1, -10),
+                                                            point(1, 1, -5)));
+    }
+
+    test("studio_simplify.vertex target follows the reference budgets")
+    {
+        expect(rad::simplified_vertex_target(300) == 300);
+        expect(rad::simplified_vertex_target(400) == 400);
+        expect(rad::simplified_vertex_target(500) == 425);
+        expect(rad::simplified_vertex_target(601) == 330);
+        expect(rad::simplified_vertex_target(1500) == 825);
+        expect(rad::simplified_vertex_target(1501) == 225);
+    }
+
+    test("studio_simplify.reduces a grid and keeps every index valid")
+    {
+        std::vector<math::vec3v> positions;
+        for (int y = 0; y <= 32; y++)
+            for (int x = 0; x <= 32; x++)
+                positions.push_back(point((float)x, (float)y, 0.0f));
+
+        std::vector<std::array<int, 3>> triangles;
+        for (int y = 0; y < 32; y++)
+        {
+            for (int x = 0; x < 32; x++)
+            {
+                const int a = y * 33 + x;
+                const int b = a + 1;
+                const int c = a + 33;
+                const int d = c + 1;
+                triangles.push_back({a, b, d});
+                triangles.push_back({a, d, c});
+            }
+        }
+
+        const rad::simplified_mesh simplified =
+            rad::simplify_shadow_mesh(positions, triangles);
+        expect(simplified.source_vertices == 1089);
+        expect(simplified.positions.size() == 598);
+        require(!simplified.triangles.empty());
+        for (const std::array<int, 3> &triangle : simplified.triangles)
+        {
+            for (int index : triangle)
+            {
+                expect(index >= 0);
+                expect((std::size_t)index < simplified.positions.size());
+            }
+            expect(triangle[0] != triangle[1]);
+            expect(triangle[1] != triangle[2]);
+            expect(triangle[0] != triangle[2]);
+        }
+        for (const math::vec3v &position : simplified.positions)
+            expect(std::fabs(position.z) < 1e-6f);
     }
 }
