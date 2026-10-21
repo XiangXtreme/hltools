@@ -935,7 +935,7 @@ A point entity carrying `zhlt_studiobsp` is replaced by solid geometry baked fro
 
 `body`, `skin`, `scale` and `xform` select the pose and placement exactly like studio shadows. The generated brushes are detail brushes (`detail_level` and `clipnode_detail_level` `1`) and get `zhlt_lightflags` bit `2`, so VIS does not split on them while RAD still treats them as opaque. Every skin is resampled to a legal BSP size (a multiple of `16`, at most `512`), embedded into the miptex lump and named with a unique hash suffix of at most 15 characters; masked skins keep the `{` prefix.
 
-Brush baking is meant for props that fit the map's brush, plane and clipnode budgets. Converted geometry counts against all of them: a 900-triangle model produces 900 brushes, 4,500 sides and roughly 10,000 planes, so very dense models should stay runtime entities or use fewer triangles. A model with no embedded skins is rejected with a warning, and triangles whose normal or texture projection cannot be built are counted and skipped.
+Brush baking is meant for props that fit the map's brush, plane and clipnode budgets. Converted geometry counts against all of them: a 900-triangle model produces 900 brushes, 4,500 sides and roughly 10,000 planes, so very dense models should stay runtime entities or use fewer triangles. A model with no embedded skins is rejected with a warning. Triangles thinner than the CSG plane epsilon are inflated inside their own plane to 0.5 world units so heavily downscaled props still produce closed brushes, while degenerate triangles or ones with no usable texture projection are counted and skipped.
 
 </details>
 

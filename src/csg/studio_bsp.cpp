@@ -33,6 +33,8 @@ namespace csg
         constexpr float default_thickness = 1.0f;
         constexpr float min_thickness = 0.01f;
         constexpr float max_thickness = 512.0f;
+        // prisms thinner than this never survive the csg plane epsilon
+        constexpr double minimum_bake_altitude = 0.5;
         constexpr int texture_alignment = 16;
         constexpr int texture_max_size = 512;
         constexpr unsigned opaque_light_flag = 2;
@@ -557,6 +559,7 @@ namespace csg
             const placement place_matrix = placement_for(origin, angles, scale);
             std::vector<prism> prisms;
             int degenerate = 0;
+            int inflated = 0;
             int fallback_mappings = 0;
             for (const format::studio_mesh &mesh : model.meshes)
             {
@@ -581,13 +584,41 @@ namespace csg
                         uv[k][1] = vertex.v;
                     }
 
-                    const math::vec3v normal = math::cross(points[1] - points[0],
-                                                           points[2] - points[0]);
-                    const double length = math::length(normal);
-                    if (length < 1e-6)
+                    math::vec3v normal = math::cross(points[1] - points[0],
+                                                     points[2] - points[0]);
+                    double length = math::length(normal);
+                    if (length < 1e-9)
                     {
                         degenerate++;
                         continue;
+                    }
+
+                    // a heavily downscaled model can have triangles thinner than
+                    // the csg plane epsilon; those wedges never form a closed
+                    // brush. inflate just the slivers in their own plane so the
+                    // prism keeps its front plane, position and winding order.
+                    const double e0 = math::length(points[1] - points[0]);
+                    const double e1 = math::length(points[2] - points[1]);
+                    const double e2 = math::length(points[0] - points[2]);
+                    const double max_edge = std::max(e0, std::max(e1, e2));
+                    const double altitude = max_edge > 0.0 ? length / max_edge : 0.0;
+                    if (altitude < minimum_bake_altitude)
+                    {
+                        const double factor = std::min(64.0,
+                            minimum_bake_altitude / std::max(altitude, 1e-9));
+                        const math::vec3v center = (points[0] + points[1] + points[2])
+                                                   * (1.0 / 3.0);
+                        for (int k = 0; k < 3; k++)
+                            points[k] = center + (points[k] - center) * factor;
+                        normal = math::cross(points[1] - points[0],
+                                             points[2] - points[0]);
+                        length = math::length(normal);
+                        if (length < 1e-9)
+                        {
+                            degenerate++;
+                            continue;
+                        }
+                        inflated++;
                     }
                     const math::vec3v unit = normal * (1.0 / length);
                     math::vec3v back[3];
@@ -697,6 +728,12 @@ namespace csg
             {
                 logging::warn("zhlt_studiobsp: %s skipped %d degenerate triangle(s)",
                               model_name.c_str(), degenerate);
+            }
+            if (inflated)
+            {
+                logging::warn("zhlt_studiobsp: %s inflated %d sliver triangle(s) to %.2f "
+                              "world units",
+                              model_name.c_str(), inflated, (double)minimum_bake_altitude);
             }
             if (fallback_mappings)
             {

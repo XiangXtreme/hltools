@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstring>
 #include <filesystem>
 #include <string>
@@ -54,6 +55,53 @@ namespace
         std::vector<byte> bytes;
         require(format::write_goldsrc_model(make_quad_model(), bytes));
         const std::string path = (root / "models" / "props" / "bake.mdl").string();
+        require(fs::write_all(path, bytes.data(), bytes.size()));
+        return path;
+    }
+
+    format::studio_model make_sliver_model()
+    {
+        format::studio_model model;
+        model.name = "models/props/sliver.mdl";
+
+        format::studio_bone bone;
+        bone.name = "root";
+        model.bones.push_back(bone);
+
+        const float corners[3][2] = {{0, 0}, {16, 0}, {8, 0.1f}};
+        const float uv[3][2] = {{0, 0}, {1, 0}, {0.5f, 1}};
+        for (int i = 0; i < 3; i++)
+        {
+            format::studio_vertex vertex;
+            vertex.position[0] = corners[i][0];
+            vertex.position[1] = corners[i][1];
+            vertex.normal[2] = 1;
+            vertex.u = uv[i][0];
+            vertex.v = uv[i][1];
+            model.vertices.push_back(vertex);
+        }
+
+        format::studio_mesh mesh;
+        mesh.material = 0;
+        mesh.indices = {0, 1, 2};
+        model.meshes.push_back(mesh);
+
+        format::studio_texture texture;
+        texture.name = "sliver_skin.bmp";
+        texture.image.width = 16;
+        texture.image.height = 16;
+        texture.image.pixels.assign(256, 0);
+        model.textures.push_back(texture);
+        return model;
+    }
+
+    std::string write_sliver_model(const std::filesystem::path &root)
+    {
+        std::filesystem::create_directories(root / "models" / "props");
+        std::filesystem::create_directories(root / "maps");
+        std::vector<byte> bytes;
+        require(format::write_goldsrc_model(make_sliver_model(), bytes));
+        const std::string path = (root / "models" / "props" / "sliver.mdl").string();
         require(fs::write_all(path, bytes.data(), bytes.size()));
         return path;
     }
@@ -256,5 +304,40 @@ suite("unit.csg.studio_bsp")
         expect(map.brushes[3].first_side == 11);
         expect(map.sides.size() == 11);
         expect(std::string(map.sides[0].texture.name) == "BRICK");
+    }
+
+    test("studio_bsp.inflates sliver triangles below the csg epsilon")
+    {
+        const std::filesystem::path root =
+            test_support::scratch_directory("csg_studio_bsp_sliver");
+        write_sliver_model(root);
+
+        csg::map_source map;
+        map.entities.push_back(make_world());
+        csg::map_entity entity;
+        entity.set_value("classname", "env_static");
+        entity.set_value("model", "models/props/sliver.mdl");
+        entity.set_value("origin", "0 0 0");
+        entity.set_value("zhlt_studiobsp", "1");
+        entity.set_value("zhlt_studiobsp_collision", "1");
+        map.entities.push_back(entity);
+
+        csg::inject_studio_brushes(map, (root / "maps" / "test.map").string());
+
+        // the 0.1 unit tall triangle is too thin for the plane epsilon, so it
+        // must be inflated instead of skipped or emitted as a leaky wedge
+        require(map.brushes.size() == 1);
+        const csg::map_brush &brush = map.brushes[0];
+        require(brush.num_sides == 5);
+        float minimum = 1e9f;
+        float maximum = -1e9f;
+        const csg::brush_side &front = map.sides[(std::size_t)brush.first_side];
+        for (int i = 0; i < 3; i++)
+        {
+            const float y = front.planepts[i].y;
+            minimum = std::min(minimum, y);
+            maximum = std::max(maximum, y);
+        }
+        expect(maximum - minimum >= 0.45f);
     }
 }
