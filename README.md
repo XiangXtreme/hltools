@@ -377,6 +377,9 @@ clipnodes. Contents classification keeps the complete volume constraints.
 Within a fixed search budget, BSP compares area and face-count split orders
 and keeps the complete tree with fewer reachable nodes. An unfinished trial
 is discarded; the completed tree remains available.
+Final graph compaction factors shared branch results using exact predicate
+identities. A bounded search accepts a rewrite only when the total reachable
+clipnode count across all model/hull roots decreases, preserving plane ties.
 Complex unions can increase compile time and clipnode usage;
 exceeding the geometry budget fails the compile.
 

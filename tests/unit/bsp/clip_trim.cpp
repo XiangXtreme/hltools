@@ -86,6 +86,46 @@ test("legacytrim only removes solid and preserves original empty and liquid leav
     expect(contents(map,0,1,{-1,0,-5}) == bsp::contents_solid);
 }
 
+test("collision factoring preserves predicate ties and counts shared hull roots")
+{
+    for (bool shared : {false, true})
+    for (bool common_front : {false, true})
+    {
+        auto map = solid_world();
+        format::dplane_t x{}, y{};
+        x.normal[0] = 1; x.type = 0;
+        y.normal[1] = 1; y.type = 1;
+        map.planes = {x,y};
+        format::dclipnode_t root{}, front{}, back{};
+        root.planenum = 0; root.children[0] = 1; root.children[1] = 2;
+        front.planenum = back.planenum = 1;
+        int common = common_front ? 0 : 1, different = 1 - common;
+        front.children[different] = bsp::contents_water;
+        back.children[different] = bsp::contents_empty;
+        front.children[common] = back.children[common] = bsp::contents_solid;
+        map.clipnodes = {root,front,back}; map.models[0].headnode[1] = 0;
+        if (shared) map.models[0].headnode[2] = 1;
+        // Exercise final graph compaction while the selected model's trim
+        // preserves its solid contents. The measured tree is in model zero.
+        bsp::trim_group g; g.model = 1;
+        g.targets = g.guards = {box({-2,-2,-2},{2,2,2})};
+        bsp::bsp_state state; state.map = &map; state.trim_groups = {g};
+        bsp::trim_legacy_collision(state);
+        expect(map.clipnodes.size() == (shared ? 3u : 2u));
+        for (double px : {-1.,-1e-9,0.,1e-9,1.})
+            for (double py : {-1.,-1e-9,0.,1e-9,1.})
+            {
+                bool solid = common_front ? py >= 0 : py < 0;
+                int expected = solid ? bsp::contents_solid
+                    : (px < 0 ? bsp::contents_empty : bsp::contents_water);
+                expect(contents(map,0,1,{px,py,0}) == expected);
+                if (shared) expect(contents(map,0,2,{px,py,0})
+                    == (solid ? bsp::contents_solid : bsp::contents_water));
+            }
+        expect(map.models[0].headnode[0] == 123);
+    }
+}
+
 test("legacytrim classifies oblique boundaries throughout a convex cell")
 {
     auto map = solid_world();

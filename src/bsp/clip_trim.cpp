@@ -532,6 +532,80 @@ namespace bsp
                 nodes.resize(checkpoint);
             }
 
+            void factor_roots(std::vector<format::dmodel_t> &models)
+            {
+                std::vector<int> roots;
+                for (const auto &m : models)
+                    for (int h = 1; h < num_hulls; h++) roots.push_back(m.headnode[h]);
+                size_t work = 0, trials = 0;
+                constexpr size_t work_limit = 64000000, trial_limit = 256;
+                auto reachable = [&](const std::vector<int> &heads) {
+                    std::vector<int> result, pending = heads;
+                    std::vector<bool> seen(nodes.size());
+                    while (!pending.empty() && work < work_limit)
+                    {
+                        int id = pending.back(); pending.pop_back(); ++work;
+                        if (id < 0 || seen[(size_t)id]) continue;
+                        seen[(size_t)id] = true; result.push_back(id);
+                        pending.push_back(nodes[(size_t)id].front);
+                        pending.push_back(nodes[(size_t)id].back);
+                    }
+                    std::sort(result.begin(), result.end());
+                    return result;
+                };
+                auto live = reachable(roots);
+                while (work < work_limit && trials < trial_limit && nodes.size() < 1900000)
+                {
+                    bool improved = false;
+                    for (int id : live)
+                    {
+                        if (work >= work_limit || trials >= trial_limit || nodes.size() >= 1900000) break;
+                        const auto n = nodes[(size_t)id];
+                        if (n.front < 0 || n.back < 0) continue;
+                        const auto f = nodes[(size_t)n.front], b = nodes[(size_t)n.back];
+                        if (f.plane != b.plane || (f.front != b.front && f.back != b.back)) continue;
+                        ++trials;
+                        size_t checkpoint = nodes.size();
+                        int front = node(n.plane, f.front, b.front);
+                        int back = node(n.plane, f.back, b.back);
+                        int replacement = node(f.plane, front, back);
+                        std::vector<int> remap(nodes.size(), std::numeric_limits<int>::min());
+                        remap[(size_t)id] = replacement;
+                        bool stopped = false;
+                        std::function<int(int, int)> rewrite = [&](int old, int depth) -> int {
+                            if (old < 0 || stopped) return old;
+                            if (++work >= work_limit || depth > 1024 || nodes.size() >= 1900000)
+                            { stopped = true; return old; }
+                            // Only original roots and their original children
+                            // are traversed; freshly interned nodes are results.
+                            int &mapped = remap[(size_t)old];
+                            if (mapped != std::numeric_limits<int>::min()) return mapped;
+                            const auto child = nodes[(size_t)old];
+                            int cf = rewrite(child.front, depth + 1);
+                            int cb = rewrite(child.back, depth + 1);
+                            if (stopped) return old;
+                            return mapped = node(child.plane, cf, cb);
+                        };
+                        std::vector<int> candidate;
+                        for (int root : roots) candidate.push_back(rewrite(root, 0));
+                        auto next = stopped ? std::vector<int>{} : reachable(candidate);
+                        // Shannon factoring is exact for every predicate value,
+                        // including distance == 0. Measure all model/hull roots:
+                        // a shared old subtree may remain live elsewhere.
+                        if (!stopped && work < work_limit && next.size() < live.size())
+                        {
+                            roots = std::move(candidate); live = std::move(next);
+                            improved = true; break;
+                        }
+                        discard_nodes(checkpoint);
+                    }
+                    if (!improved) break;
+                }
+                size_t i = 0;
+                for (auto &m : models)
+                    for (int h = 1; h < num_hulls; h++) m.headnode[h] = roots[i++];
+            }
+
             int surface_union(const candidates &volumes, const math::bounding_box &bounds)
             {
                 // Boundary subtraction is quadratic in the input volumes.
@@ -950,6 +1024,7 @@ namespace bsp
 
             void finish(std::vector<format::dmodel_t> models)
             {
+                factor_roots(models);
                 std::vector<format::dclipnode_t> output;
                 std::vector<int> remap(nodes.size(), std::numeric_limits<int>::min()), plane_remap(planes.size(), -1);
                 // Original plane indices are also referenced by draw nodes/faces.
