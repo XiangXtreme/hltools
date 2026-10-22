@@ -1,6 +1,8 @@
 #include "internal.h"
 
 #include <cstdlib>
+#include <cerrno>
+#include <climits>
 #include <cstring>
 
 #include "../common/error.h"
@@ -28,6 +30,13 @@ namespace bsp
         }
     }
 
+    bool token_file::has_more() const
+    {
+        size_t pos = pos_;
+        while (pos < text_.size() && is_space(text_[pos])) pos++;
+        return pos < text_.size();
+    }
+
     bool token_file::next_int(int &out)
     {
         while (pos_ < text_.size() && is_space(text_[pos_]))
@@ -37,7 +46,12 @@ namespace bsp
         size_t start = pos_;
         while (pos_ < text_.size() && !is_space(text_[pos_]))
             pos_++;
-        out = std::atoi(text_.c_str() + start);
+        char *end = nullptr;
+        errno = 0;
+        long value = std::strtol(text_.c_str() + start, &end, 10);
+        if (end != text_.c_str() + pos_ || errno == ERANGE || value < INT_MIN || value > INT_MAX)
+            return false;
+        out = (int)value;
         return true;
     }
 
@@ -50,7 +64,11 @@ namespace bsp
         size_t start = pos_;
         while (pos_ < text_.size() && !is_space(text_[pos_]))
             pos_++;
-        out = std::atof(text_.c_str() + start);
+        char *end = nullptr;
+        errno = 0;
+        out = std::strtod(text_.c_str() + start, &end);
+        if (end != text_.c_str() + pos_ || errno == ERANGE)
+            return false;
         return true;
     }
 
@@ -81,6 +99,7 @@ namespace bsp
             state.hull_size[i][0] = {(vec_t)(float)v[0], (vec_t)(float)v[1], (vec_t)(float)v[2]};
             state.hull_size[i][1] = {(vec_t)(float)v[3], (vec_t)(float)v[4], (vec_t)(float)v[5]};
         }
+        parse_clip_trim(state, f);
     }
 
     void load_hull_sizes(bsp_state &state)

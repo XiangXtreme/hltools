@@ -86,6 +86,7 @@ namespace csg
         simple,
         precise,
         legacy,
+        legacytrim,
     };
 
     struct brush_build_options
@@ -116,6 +117,10 @@ namespace csg
         int clipnode_detail_level = 0;
         int coplanar_priority = 0;
         brush_hull hulls[num_hulls];
+        // Exact box expansions are kept separate from the legacy plane store:
+        // inserting them there would change subsequent legacy plane merging.
+        std::vector<math::plane> trim_planes[num_hulls];
+        math::bounding_box trim_bounds[num_hulls];
         bool skipped = false;
     };
 

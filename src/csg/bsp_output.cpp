@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <iomanip>
+#include <sstream>
 #include <utility>
 #include <vector>
 
@@ -781,6 +783,59 @@ namespace csg
         }
 
         data.planes = plane_file_bytes(result.planes);
+        // Optional .hsz v1 extension. Model order must match hull_surface_file,
+        // including models with no collision in a particular hull.
+        std::ostringstream groups;
+        groups << std::setprecision(17);
+        int model = 0, count = 0;
+        auto volume = [&](const math::bounding_box &bounds,
+                          const std::vector<math::plane> &planes) {
+            groups << planes.size();
+            for (int a = 0; a < 3; a++) groups << ' ' << bounds.mins[a];
+            for (int a = 0; a < 3; a++) groups << ' ' << bounds.maxs[a];
+            groups << '\n';
+            for (const auto &p : planes)
+                groups << p.normal.x << ' ' << p.normal.y << ' '
+                       << p.normal.z << ' ' << p.dist << '\n';
+        };
+        auto legacy_volume = [&](const brush_hull &hull) {
+            std::vector<math::plane> planes;
+            for (const auto &face : hull.faces)
+            {
+                const auto &p = result.planes[(size_t)face.planenum];
+                planes.push_back({p.normal, p.dist});
+            }
+            volume(hull.bounds, planes);
+        };
+        for (const auto &entity : result.entities)
+        {
+            if (entity.entity_num < 0 || entity.entity_num >= (int)result.map.entities.size()
+                || result.map.entities[(size_t)entity.entity_num].num_brushes <= 0)
+                continue;
+            for (int h = 1; h < num_hulls; h++)
+            {
+                int targets = 0, guards = 0;
+                for (const auto &brush : entity.brushes)
+                {
+                    if (brush.contents != content::solid || brush.hulls[h].faces.empty()) continue;
+                    guards++;
+                    if (!brush.trim_planes[h].empty()) targets++;
+                }
+                if (!targets) continue;
+                count++;
+                groups << model << ' ' << h << ' ' << targets << ' ' << guards << '\n';
+                for (const auto &brush : entity.brushes)
+                    if (!brush.trim_planes[h].empty()) legacy_volume(brush.hulls[h]);
+                for (const auto &brush : entity.brushes)
+                {
+                    if (brush.contents != content::solid || brush.hulls[h].faces.empty()) continue;
+                    if (brush.trim_planes[h].empty()) legacy_volume(brush.hulls[h]);
+                    else volume(brush.trim_bounds[h], brush.trim_planes[h]);
+                }
+            }
+            model++;
+        }
+        if (count) data.hull_sizes += "1 " + std::to_string(count) + "\n" + groups.str();
         return data;
     }
 

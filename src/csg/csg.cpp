@@ -54,6 +54,8 @@ namespace csg
             out = clip_type::precise;
         else if (str::iequals(value, "legacy"))
             out = clip_type::legacy;
+        else if (str::iequals(value, "legacytrim"))
+            out = clip_type::legacytrim;
         else
             return false;
         return true;
@@ -73,6 +75,8 @@ namespace csg
             return "precise";
         case clip_type::legacy:
             return "legacy";
+        case clip_type::legacytrim:
+            return "legacytrim";
         case clip_type::inherit:
             return "inherit";
         default:

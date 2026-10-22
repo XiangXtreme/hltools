@@ -1,5 +1,6 @@
 #include "brush.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -143,7 +144,8 @@ namespace csg
                 shifted.z += options.hull_size[hull_num][1].z;
                 return shifted;
             }
-            if (options.clip == clip_type::legacy || options.clip == clip_type::normalized)
+            if (options.clip == clip_type::legacy || options.clip == clip_type::legacytrim
+                || options.clip == clip_type::normalized)
             {
                 for (int i = 0; i < 3; i++)
                 {
@@ -481,6 +483,58 @@ namespace csg
             return faces;
         }
 
+        std::vector<math::plane> exact_box_planes(const brush_hull &source,
+                                                const plane_store &planes,
+                                                const math::vec3v &mins,
+                                                const math::vec3v &maxs)
+        {
+            std::vector<math::vec3v> vertices;
+            for (const brush_face &face : source.faces)
+                for (const math::vec3v &v : face.winding.points())
+                    vertices.push_back(v);
+            std::vector<math::plane> result;
+            auto add = [&](math::vec3v n) {
+                const double length = math::length(n);
+                if (length < 1e-10)
+                    return;
+                n = n * (1.0 / length);
+                for (const math::plane &p : result)
+                    if (math::length(n - p.normal) < 1e-9)
+                        return;
+                vec_t d = -1e30;
+                for (const math::vec3v &v : vertices)
+                    d = std::max(d, math::dot(n, v));
+                for (int axis = 0; axis < 3; axis++)
+                    d += n[axis] * (n[axis] >= 0 ? maxs[axis] : mins[axis]);
+                result.push_back({n, d});
+            };
+            // Facet normals of a convex brush + box: brush faces, box faces,
+            // and brush-edge x box-edge axes. Redundant supporting planes
+            // are safe; none may cut into the Minkowski sum.
+            for (int axis = 0; axis < 3; axis++)
+            {
+                math::vec3v n{};
+                n[axis] = 1;
+                add(n);
+                add(-n);
+            }
+            for (const brush_face &face : source.faces)
+            {
+                add(planes.planes()[(size_t)face.planenum].normal);
+                const auto &points = face.winding.points();
+                for (size_t i = 0; i < points.size(); i++)
+                    for (int axis = 0; axis < 3; axis++)
+                    {
+                        math::vec3v unit{}, n;
+                        unit[axis] = 1;
+                        math::cross(points[(i + 1) % points.size()] - points[i], unit, n);
+                        add(n);
+                        add(-n);
+                    }
+            }
+            return result;
+        }
+
         void build_clip_hulls(const map_brush &brush,
                               const plane_store &planes,
                               plane_store &mutable_planes,
@@ -539,6 +593,14 @@ namespace csg
                 std::vector<brush_face> hull_faces = make_expanded_clip_planes(
                     brush, out.hulls[0], planes, mutable_planes, h, options);
                 out.hulls[h] = make_hull_faces(brush, mutable_planes, std::move(hull_faces), options.world_extent);
+                if (options.clip == clip_type::legacytrim && out.contents == content::solid
+                    && !out.hulls[h].faces.empty())
+                {
+                    out.trim_planes[h] = exact_box_planes(out.hulls[0], planes,
+                        options.hull_size[h][0], options.hull_size[h][1]);
+                    out.trim_bounds[h].mins = out.hulls[0].bounds.mins + options.hull_size[h][0];
+                    out.trim_bounds[h].maxs = out.hulls[0].bounds.maxs + options.hull_size[h][1];
+                }
             }
         }
 

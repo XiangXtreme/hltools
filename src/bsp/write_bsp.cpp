@@ -937,5 +937,6 @@ namespace bsp
             dp.dist = (float)mp.dist;
             dp.type = mp.type;
         }
+        trim_legacy_collision(state);
     }
 }

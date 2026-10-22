@@ -24,7 +24,7 @@ namespace tools
             csg::clip_type clip = csg::clip_type::simple;
             const char *value = args.value("-cliptype", nullptr);
             if (value && !csg::parse_clip_type(value, clip))
-                err::fatal("-cliptype must be smallest, normalized, simple, precise, or legacy");
+                err::fatal("-cliptype must be smallest, normalized, simple, precise, legacy, or legacytrim");
             return clip;
         }
     }
@@ -96,6 +96,7 @@ namespace tools
                 "\n"
                 "geometry\n"
                 "  -cliptype <type>      smallest | normalized | simple | precise | legacy\n"
+                "                       legacytrim (trim excess legacy collision)\n"
                 "                                                       (default: simple)\n"
                 "                        func_detail may override with zhlt_cliptype\n"
                 "  -noclip               don't create the clipping hulls\n"

@@ -272,6 +272,7 @@ target_link_libraries(hltools_csg PUBLIC hltools_format hltools_math hltools_com
 
 # bsp: solid tree build, portals, fill, tjunc, edges, and bsp writing
 add_library(hltools_bsp STATIC
+    src/bsp/clip_trim.cpp
     src/bsp/brush.cpp
     src/bsp/face.cpp
     src/bsp/inputs.cpp

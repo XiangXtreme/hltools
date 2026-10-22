@@ -117,6 +117,7 @@ add_hltools_unit(unit_math
 add_hltools_unit(unit_bsp
     PREFIX "unit.bsp."
     SOURCES
+        unit/bsp/clip_trim.cpp
         unit/bsp/leaf_content_conflicts.cpp
         unit/bsp/pack.cpp
         unit/bsp/subdivide_face.cpp
@@ -131,7 +132,7 @@ add_hltools_unit(unit_csg
         unit/csg/map_parser.cpp
         unit/csg/studio_bsp.cpp
         unit/csg/textures.cpp
-    LIBRARIES hltools_csg
+    LIBRARIES hltools_csg hltools_bsp
     LABEL unit.csg)
 
 add_hltools_unit(unit_rad

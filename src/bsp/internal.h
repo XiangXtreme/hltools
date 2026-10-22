@@ -11,6 +11,7 @@
 #include "../math/vector.h"
 #include "../math/winding.h"
 #include "bsp.h"
+#include "clip_trim.h"
 
 // the bsp stage keeps the reference's intrusive linked lists and ownership:
 // faces, surfaces, sides, brushes, nodes and portals are heap nodes threaded
@@ -189,6 +190,7 @@ namespace bsp
         }
         bool next_int(int &out);
         bool next_double(double &out);
+        bool has_more() const;
 
     private:
         std::string text_;
@@ -202,6 +204,7 @@ namespace bsp
         std::string base_path;
 
         std::vector<plane> planes; // double planes from the csg pln file
+        std::vector<trim_group> trim_groups;
         math::vec3v hull_size[num_hulls][2] = {
             {{0, 0, 0}, {0, 0, 0}},
             {{-16, -16, -36}, {16, 16, 36}},

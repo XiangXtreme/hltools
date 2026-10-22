@@ -339,7 +339,7 @@ hltools csg [options] <map>
 | Textures | `-nowadautodetect` | Keep unused WADs in the written worldspawn WAD list |
 | Textures | `-wadcfgfile <file>` | Read WAD paths from a configuration file |
 | Textures | `-wadconfig <name>` | Select a named block from the WAD configuration |
-| Geometry | `-cliptype <type>` | `smallest`, `normalized`, `simple`, `precise`, or `legacy`; default `simple`. A `func_detail` entity can override it with `zhlt_cliptype`; `func_group` and unknown values inherit the global setting |
+| Geometry | `-cliptype <type>` | `smallest`, `normalized`, `simple`, `precise`, `legacy`, or `legacytrim`; default `simple`. A `func_detail` entity can override it with `zhlt_cliptype`; `func_group` and unknown values inherit the global setting |
 | Geometry | `-noclip` | Do not create clipping hulls |
 | Geometry | `-noskyclip` | Do not grow invisible clip copies from sky brushes |
 | Geometry | `-scale <n>` | Scale the whole map around the origin |
@@ -351,6 +351,16 @@ hltools csg [options] <map>
 | Entities | `-onlyents` | Replace only the entity lump of an existing BSP |
 | Entities | `-nolightopt` | Keep redundant named lights instead of stripping their targetnames |
 | Misc | `-threads <n>` | Set worker threads |
+
+`legacytrim` first builds the ordinary legacy collision, then BSP removes solid
+regions within selected brushes that lie outside the union of their exact
+brush-plus-player-box expansions. It preserves coverage from unselected brushes
+and custom hull shapes, draw geometry, liquid contents, and exterior world fill.
+It only removes collision; it does not repair gaps already present in legacy.
+Use `-cliptype legacytrim` globally, or `zhlt_cliptype=legacytrim` on a
+`func_detail` for local control. The optional trim data travels in the `.hsz`
+intermediate, so CSG and BSP must both use this version of hltools. Extra clipping
+planes can increase clipnode usage; an exceeded budget fails the compile.
 
 </details>
 
