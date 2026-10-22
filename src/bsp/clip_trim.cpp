@@ -1397,6 +1397,17 @@ namespace bsp
                     for (int level = 1; level <= 4; ++level) optimize_roots(models, level);
                 if (optimize_roots(models, 0, 0, 8, 4))
                     for (int level = 1; level <= 4; ++level) optimize_roots(models, level);
+                // Window rewrites can open equal-size paths which were absent
+                // during the earlier exploration rounds.
+                for (std::uint32_t round = 0; round < 4; ++round)
+                {
+                    bool improved = false;
+                    for (std::uint32_t seed : {17u,193u,1021u})
+                        improved |= optimize_roots(models, 1, seed + (round + 8u) * 4099u);
+                    for (int level = 1; level <= 4; ++level)
+                        improved |= optimize_roots(models, level);
+                    if (!improved) break;
+                }
                 std::vector<format::dclipnode_t> output;
                 std::vector<int> remap(nodes.size(), std::numeric_limits<int>::min()), plane_remap(planes.size(), -1);
                 // Original plane indices are also referenced by draw nodes/faces.

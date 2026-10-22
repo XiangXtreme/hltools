@@ -399,6 +399,8 @@ with at most one million stored node references before direct scoring resumes.
 Replacements are
 accepted only when all model/hull roots together use fewer nodes and satisfy
 the depth limit; incomplete trials are discarded.
+After window synthesis, up to four further rounds alternate exploration with
+strict plane-order compaction. A round with no reduction ends this search too.
 Complex unions can increase compile time and clipnode usage;
 exceeding the geometry budget fails the compile.
 
