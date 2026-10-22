@@ -242,3 +242,63 @@ test("exactunion captures exterior paths for the current model and hull before c
     expect(contents(map,0,3,{-4.5,0,0}) == bsp::contents_solid);
     expect(contents(map,1,1,{-4.5,0,0}) == bsp::contents_solid);
 }
+
+test("exactunion keeps tessellated planar collision compact")
+{
+    auto map = solid_world();
+    bsp::trim_group g;
+    const double diagonal = 1 / std::sqrt(2.0);
+    const double slope = 1 / std::sqrt(1.13);
+    for (int x = 0; x < 16; x += 4)
+        for (int y = 0; y < 16; y += 4)
+            for (int side = 0; side < 2; side++)
+            {
+                auto v = box({(double)x,(double)y,-4},{x+4.,y+4.,12});
+                v.planes.push_back({{-0.2*slope,-0.3*slope,slope},2*slope});
+                v.planes.push_back(side
+                    ? math::plane{{-diagonal,-diagonal,0},-(x+y+4)*diagonal}
+                    : math::plane{{diagonal,diagonal,0},(x+y+4)*diagonal});
+                // A supporting plane touching only an edge cannot partition
+                // the union's interior, including after fragment clipping.
+                v.planes.push_back({{diagonal,0,-diagonal},(x+8)*diagonal});
+                g.targets.push_back(v);
+            }
+    g.guards = g.additions = g.targets;
+    bsp::bsp_state state; state.map = &map; state.trim_groups = {g};
+    bsp::trim_legacy_collision(state);
+    expect(map.clipnodes.size() < 200);
+    for (double x = -0.75; x < 17; x += 0.5)
+        for (double y = -0.75; y < 17; y += 0.5)
+            for (double z : {-4.25,-3.25,1.125,3.125,7.125,11.125})
+            {
+                bool exact = x >= 0 && x <= 16 && y >= 0 && y <= 16
+                    && z >= -4 && z <= 0.2*x + 0.3*y + 2;
+                expect(contents(map,0,1,{x,y,z})
+                    == (exact ? bsp::contents_solid : bsp::contents_empty));
+            }
+}
+
+test("exactunion prunes outside branches without changing distant contents")
+{
+    auto map = solid_world();
+    format::dplane_t x{}, y{}, oblique{};
+    x.normal[0] = 1; x.type = 0; x.dist = 100;
+    y.normal[1] = -1; y.type = 4; y.dist = -200;
+    oblique.normal[0] = oblique.normal[2] = float(1/std::sqrt(2.0));
+    oblique.type = 3;
+    format::dclipnode_t a{}, b{}, c{};
+    a.planenum = 0; a.children[0] = 1; a.children[1] = bsp::contents_solid;
+    b.planenum = 1; b.children[0] = 2; b.children[1] = bsp::contents_empty;
+    c.planenum = 2; c.children[0] = bsp::contents_water; c.children[1] = bsp::contents_solid;
+    map.planes = {x,y,oblique}; map.clipnodes = {a,b,c}; map.models[0].headnode[1] = 0;
+    const auto original = map;
+    bsp::trim_group g;
+    g.targets = {box({-8,-8,-8},{8,8,8})};
+    g.guards = g.additions = {box({-4,-4,-4},{4,4,4})};
+    bsp::bsp_state state; state.map = &map; state.trim_groups = {g};
+    bsp::trim_legacy_collision(state);
+    for (double px : {-1e12,-1000.,-10.,10.,150.,1e12})
+        for (double py : {-1e12,150.,250.,1e12})
+            for (double pz : {-1e12,-1000.,1000.,1e12})
+                expect(contents(map,0,1,{px,py,pz}) == contents(original,0,1,{px,py,pz}));
+}

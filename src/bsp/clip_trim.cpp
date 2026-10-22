@@ -105,6 +105,9 @@ namespace bsp
     namespace
     {
         constexpr double epsilon = 1e-7;
+        // Disk planes use float coefficients. Treat their roundoff-scale
+        // slivers consistently during union pruning and fragment scoring.
+        constexpr double union_epsilon = math::normal_epsilon;
         using point = math::vec3d;
         using polygon = std::vector<point>;
         using cell = std::vector<polygon>;
@@ -255,7 +258,7 @@ namespace bsp
 
             // Discard disjoint convex volumes and already satisfied planes.
             // An empty plane list means this cell is covered by that volume.
-            bool prune(candidates &list, const cell &c)
+            bool prune(candidates &list, const cell &c, double tolerance = epsilon)
             {
                 candidates next;
                 for (auto &volume : list)
@@ -265,10 +268,10 @@ namespace bsp
                     for (int p : volume)
                     {
                         auto r = range(c, geometric_planes[(size_t)p]);
-                        // Guard rounding is wider than epsilon, so a tangent
-                        // cell here cannot contain real brush-box overlap.
-                        if (r.first >= -epsilon) { disjoint = true; break; }
-                        if (r.second > epsilon) remaining.push_back(p);
+                        // Tangency within the selected geometry tolerance
+                        // does not add interior volume to this cell.
+                        if (r.first >= -tolerance) { disjoint = true; break; }
+                        if (r.second > tolerance) remaining.push_back(p);
                     }
                     if (disjoint) continue;
                     if (remaining.empty()) { list = {{}}; return true; }
@@ -320,6 +323,30 @@ namespace bsp
                 std::vector<int> sides;
             };
 
+            // Only planes with a non-collinear face remain splitter candidates.
+            // Supporting edge/vertex planes and faces removed by earlier cuts
+            // are already implied by the region and the surviving faces.
+            bool bounds_fragment(const cell &geometry, int id)
+            {
+                const auto &p = geometric_planes[(size_t)id];
+                point first{}, edge{};
+                bool have_first = false, have_edge = false;
+                for (const auto &face : geometry)
+                    for (const auto &v : face)
+                    {
+                        if (std::fabs(p.distance_to(v)) > union_epsilon) continue;
+                        if (!have_first) { first = v; have_first = true; }
+                        else if (!have_edge)
+                        {
+                            edge = v - first;
+                            if (math::length(edge) > union_epsilon) have_edge = true;
+                        }
+                        else if (math::length(math::cross(edge, v - first))
+                                 > union_epsilon * math::length(edge)) return true;
+                    }
+                return false;
+            }
+
             // Construct the union directly from convex fragments. Score real
             // fragment cuts, so adjoining brushes need not inherit the old BSP
             // split order. Region tests remove redundant supporting planes.
@@ -332,13 +359,20 @@ namespace bsp
                 for (auto &frag : fragments)
                 {
                     candidates remaining{std::move(frag.sides)};
-                    if (prune(remaining, region)) return contents_solid;
+                    if (prune(remaining, region, union_epsilon)) return contents_solid;
                     if (remaining.empty()) continue;
                     frag.sides = std::move(remaining[0]);
-                    splitters.insert(splitters.end(), frag.sides.begin(), frag.sides.end());
+                    for (int id : frag.sides)
+                        if (bounds_fragment(frag.geometry, id)) splitters.push_back(id);
                     active.push_back(std::move(frag));
                 }
                 if (active.empty()) return contents_empty;
+                // Keep every halfspace for coverage tests, even when it only
+                // touches a fragment edge. A numerical degeneracy must not
+                // turn an empty candidate list into full-region coverage.
+                if (splitters.empty())
+                    for (const auto &frag : active)
+                        splitters.insert(splitters.end(), frag.sides.begin(), frag.sides.end());
                 std::sort(splitters.begin(), splitters.end());
                 splitters.erase(std::unique(splitters.begin(), splitters.end()), splitters.end());
                 int splitter = -1;
@@ -351,9 +385,9 @@ namespace bsp
                     for (const auto &frag : active)
                     {
                         auto r = range(frag.geometry, geometric_planes[(size_t)id]);
-                        if (r.second > epsilon) front++;
-                        if (r.first < -epsilon) back++;
-                        if (r.first < -epsilon && r.second > epsilon) cuts++;
+                        if (r.second <= union_epsilon) back++;
+                        else if (r.first >= -union_epsilon) front++;
+                        else cuts++;
                     }
                     size_t score = 5 * cuts + (front > back ? front - back : back - front);
                     if (score < best) { best = score; splitter = id; }
@@ -364,8 +398,8 @@ namespace bsp
                 for (auto &frag : active)
                 {
                     auto r = range(frag.geometry, p);
-                    if (r.first >= -epsilon) front.push_back(std::move(frag));
-                    else if (r.second <= epsilon) back.push_back(std::move(frag));
+                    if (r.first >= -union_epsilon) front.push_back(std::move(frag));
+                    else if (r.second <= union_epsilon) back.push_back(std::move(frag));
                     else
                     {
                         front.push_back({half_cell(frag.geometry, p, false), frag.sides});
@@ -402,6 +436,40 @@ namespace bsp
                 const auto n = nodes[(size_t)id];
                 int f = without_solid(n.front, cache), b = without_solid(n.back, cache);
                 return cache[id] = node(n.plane, f, b);
+            }
+
+            // An outside branch is unbounded. Propagate exact axial intervals
+            // instead of retaining the complete old tree under every box side.
+            int restrict_outside(int original, math::bounding_box bounds, int depth)
+            {
+                if (++visits > 2000000 || depth > 768)
+                    err::fatal("exactunion: outside subdivision budget exceeded");
+                if (original < 0) return original;
+                const auto n = nodes[(size_t)original];
+                const auto p = geometric_planes[(size_t)n.plane];
+                double lo = -p.dist, hi = -p.dist;
+                int axis = -1, nonzero = 0;
+                for (int a = 0; a < 3; a++)
+                    if (p.normal[a] != 0)
+                    {
+                        axis = a; nonzero++;
+                        lo += p.normal[a] * (p.normal[a] > 0 ? bounds.mins[a] : bounds.maxs[a]);
+                        hi += p.normal[a] * (p.normal[a] > 0 ? bounds.maxs[a] : bounds.mins[a]);
+                    }
+                if (lo >= 0) return restrict_outside(n.front, bounds, depth + 1);
+                if (hi <= 0) return restrict_outside(n.back, bounds, depth + 1);
+                auto front = bounds, back = bounds;
+                if (nonzero == 1)
+                {
+                    double cut = p.dist / p.normal[axis];
+                    if (p.normal[axis] > 0)
+                    { front.mins[axis] = cut; back.maxs[axis] = cut; }
+                    else
+                    { front.maxs[axis] = cut; back.mins[axis] = cut; }
+                }
+                int f = restrict_outside(n.front, front, depth + 1);
+                int b = restrict_outside(n.back, back, depth + 1);
+                return node(n.plane, f, b);
             }
 
             int overlay(int original, int addition, const cell &region, int depth)
@@ -512,6 +580,15 @@ namespace bsp
                     // Preserve non-solid contents and the actual exterior flood.
                     candidates additions;
                     prepare(g.additions, additions, true);
+                    // S union (L intersection (S union G)) equals
+                    // S union (L intersection G). Keeping S in both trees
+                    // only cross-subdivides the old tree by the same terrain.
+                    candidates selected = additions;
+                    std::sort(selected.begin(), selected.end());
+                    guards.erase(std::remove_if(guards.begin(), guards.end(),
+                        [&](const std::vector<int> &v) {
+                            return std::binary_search(selected.begin(), selected.end(), v);
+                        }), guards.end());
                     prepare(g.exterior, guards, false);
                     int coverage = volume_union(guards, bounds);
                     std::map<int, int> cache;
@@ -535,7 +612,20 @@ namespace bsp
                         p.normal[a] = 1; p.type = a;
                         p.dist = (float)(side ? bounds.maxs[a] : bounds.mins[a]);
                         int id = add_plane(p);
-                        result = side ? node(id, original, result) : node(id, result, original);
+                        int outside = original;
+                        if (!g.additions.empty())
+                        {
+                            math::bounding_box region;
+                            for (int k = 0; k < 3; k++)
+                            {
+                                region.mins[k] = -std::numeric_limits<double>::infinity();
+                                region.maxs[k] = std::numeric_limits<double>::infinity();
+                            }
+                            if (side) region.mins[a] = p.dist;
+                            else region.maxs[a] = p.dist;
+                            outside = restrict_outside(original, region, 0);
+                        }
+                        result = side ? node(id, outside, result) : node(id, result, outside);
                     }
                 models[(size_t)g.model].headnode[g.hull] = result;
                 if (g.additions.empty())
