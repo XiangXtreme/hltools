@@ -199,6 +199,44 @@ test("collision promotion preserves the output depth limit through shared subtre
     expect(contents(map,0,1,{1,-1,2000}) == bsp::contents_empty);
 }
 
+test("collision graph search crosses equal-size rewrites to reduce repeated predicates")
+{
+    auto map = solid_world();
+    for (int axis = 0; axis < 3; axis++)
+    {
+        format::dplane_t p{}; p.normal[axis] = 1; p.type = axis;
+        map.planes.push_back(p);
+    }
+    format::dplane_t oblique{};
+    oblique.normal[0] = oblique.normal[1] = oblique.normal[2] = float(1/std::sqrt(3.0));
+    oblique.type = 3; map.planes.push_back(oblique);
+    auto branch = [&](int plane, int front, int back) {
+        format::dclipnode_t n{}; n.planenum = plane;
+        n.children[0] = (short)front; n.children[1] = (short)back;
+        map.clipnodes.push_back(n);
+    };
+    branch(2, bsp::contents_empty, bsp::contents_solid);
+    branch(0, 0, bsp::contents_solid);
+    branch(3, bsp::contents_water, bsp::contents_solid);
+    branch(1, 2, bsp::contents_solid);
+    branch(1, 3, 2);
+    branch(1, bsp::contents_solid, 4);
+    map.models[0].headnode[1] = 1;
+    map.models[0].headnode[2] = 4;
+    map.models[0].headnode[3] = 5;
+    const auto original = map;
+    bsp::trim_group g; g.model = 1;
+    g.targets = g.guards = {box({-2,-2,-2},{2,2,2})};
+    bsp::bsp_state state; state.map = &map; state.trim_groups = {g};
+    bsp::trim_legacy_collision(state);
+    expect(map.clipnodes.size() <= 4u);
+    for (int h = 1; h < 4; h++)
+        for (double x : {-1.,0.,1.})
+            for (double y : {-1.,0.,1.})
+                for (double z : {-1.,0.,1.})
+                    expect(contents(map,0,h,{x,y,z}) == contents(original,0,h,{x,y,z}));
+}
+
 test("collision graph search preserves shared repeated predicates across all roots")
 {
     for (std::uint32_t seed : {7u,31u,149u,65537u})

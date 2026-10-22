@@ -383,6 +383,10 @@ rewrite only when the total reachable clipnode count across all model/hull roots
 decreases and the output depth limit is respected, preserving plane ties.
 Trial accounting follows changed ancestors and shared references; unfinished
 trials leave the completed graph intact.
+Three deterministic exploration passes also allow equal-size rewrites, with
+at most 256 accepted steps each, and retain the smallest completed graph. This
+can expose reductions beyond a greedy plane-order plateau without increasing
+the emitted node count or changing predicate results.
 Complex unions can increase compile time and clipnode usage;
 exceeding the geometry budget fails the compile.
 

@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <functional>
 #include <limits>
 #include <map>
+#include <set>
 #include <tuple>
 #include <unordered_map>
 #include "../common/error.h"
@@ -533,14 +535,25 @@ namespace bsp
                 nodes.resize(checkpoint);
             }
 
-            void optimize_roots(std::vector<format::dmodel_t> &models, int levels)
+            void optimize_roots(std::vector<format::dmodel_t> &models, int levels,
+                                std::uint32_t seed = 0)
             {
                 std::vector<int> roots;
                 for (const auto &m : models)
                     for (int h = 1; h < num_hulls; h++) roots.push_back(m.headnode[h]);
-                size_t work = 0, trials = 0;
+                size_t work = 0, trials = 0, steps = 0;
                 constexpr size_t work_limit = 64000000;
                 const size_t trial_limit = levels ? 65536 : 256;
+                const bool explore = seed != 0;
+                const size_t step_limit = explore ? 256 : std::numeric_limits<size_t>::max();
+                auto shuffle = [&](std::vector<int> &values) {
+                    if (!explore) return;
+                    for (size_t i = values.size(); i > 1; --i)
+                    {
+                        seed = seed * 1664525u + 1013904223u;
+                        std::swap(values[i-1], values[seed % i]);
+                    }
+                };
                 auto reachable = [&](const std::vector<int> &heads) {
                     std::vector<int> result, pending = heads;
                     std::vector<bool> seen(nodes.size());
@@ -557,7 +570,12 @@ namespace bsp
                 };
                 auto live = reachable(roots);
                 const size_t initial_size = live.size();
-                while (work < work_limit && trials < trial_limit && nodes.size() < 1900000)
+                auto best_roots = roots;
+                size_t best_size = live.size();
+                std::set<std::vector<int>> explored;
+                if (explore) explored.insert(roots);
+                while (work < work_limit && trials < trial_limit && steps < step_limit
+                       && nodes.size() < 1900000)
                 {
                     std::vector<std::vector<int>> parents(nodes.size());
                     std::vector<int> references(nodes.size());
@@ -567,7 +585,9 @@ namespace bsp
                             if (child >= 0)
                             { ++references[(size_t)child]; parents[(size_t)child].push_back(id); }
                     bool improved = false;
-                    for (int id : live)
+                    auto order = live;
+                    shuffle(order);
+                    for (int id : order)
                     {
                         if (work >= work_limit || trials >= trial_limit || nodes.size() >= 1900000) break;
                         const auto n = nodes[(size_t)id];
@@ -597,6 +617,7 @@ namespace bsp
                             if (f.plane != b.plane || (f.front != b.front && f.back != b.back)) continue;
                             splitters.push_back(f.plane);
                         }
+                        shuffle(splitters);
                         for (int splitter : splitters)
                         {
                             if (work >= work_limit || trials >= trial_limit || nodes.size() >= 1900000) break;
@@ -679,7 +700,9 @@ namespace bsp
                             // Shannon factoring is exact for every predicate value,
                             // including distance == 0. Measure all model/hull roots:
                             // a shared old subtree may remain live elsewhere.
-                            if (!stopped && work < work_limit && count < live.size())
+                            if (!stopped && work < work_limit
+                                && (count < live.size() || (explore && count == live.size()
+                                    && explored.find(candidate) == explored.end())))
                             {
                                 // Promotion can lengthen a path which never
                                 // tested the promoted plane. Cached/shared
@@ -706,6 +729,10 @@ namespace bsp
                                 auto next = reachable(candidate);
                                 if (work >= work_limit) { discard_nodes(checkpoint); break; }
                                 roots = std::move(candidate); live = std::move(next);
+                                if (explore) explored.insert(roots);
+                                if (live.size() < best_size)
+                                { best_size = live.size(); best_roots = roots; }
+                                ++steps;
                                 improved = true; break;
                             }
                             discard_nodes(checkpoint);
@@ -716,11 +743,11 @@ namespace bsp
                 }
                 size_t i = 0;
                 for (auto &m : models)
-                    for (int h = 1; h < num_hulls; h++) m.headnode[h] = roots[i++];
+                    for (int h = 1; h < num_hulls; h++) m.headnode[h] = best_roots[i++];
                 if (levels)
-                    logging::info("collision graph: %zu -> %zu nodes, %zu level-%d plane-order trials (%s)\n",
-                        initial_size, live.size(), trials, levels,
-                        work >= work_limit || trials >= trial_limit || nodes.size() >= 1900000
+                    logging::info("collision graph: %zu -> %zu nodes, %zu level-%d %s trials (%s)\n",
+                        initial_size, best_size, trials, levels, explore ? "plateau" : "plane-order",
+                        work >= work_limit || trials >= trial_limit || steps >= step_limit || nodes.size() >= 1900000
                             ? "budget reached" : "complete");
             }
 
@@ -1147,6 +1174,7 @@ namespace bsp
                 optimize_roots(models, 2);
                 optimize_roots(models, 3);
                 optimize_roots(models, 4);
+                for (std::uint32_t seed : {17u,193u,1021u}) optimize_roots(models, 1, seed);
                 std::vector<format::dclipnode_t> output;
                 std::vector<int> remap(nodes.size(), std::numeric_limits<int>::min()), plane_remap(planes.size(), -1);
                 // Original plane indices are also referenced by draw nodes/faces.
