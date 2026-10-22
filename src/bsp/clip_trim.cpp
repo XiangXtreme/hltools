@@ -553,7 +553,7 @@ namespace bsp
                 return -1;
             }
 
-            void optimize_roots(std::vector<format::dmodel_t> &models, int levels,
+            bool optimize_roots(std::vector<format::dmodel_t> &models, int levels,
                                 std::uint32_t seed = 0)
             {
                 std::vector<int> roots;
@@ -769,6 +769,7 @@ namespace bsp
                         initial_size, best_size, trials, levels, explore ? "plateau" : "plane-order",
                         work >= work_limit || trials >= trial_limit || steps >= step_limit || nodes.size() >= 1900000
                             ? "budget reached" : "complete");
+                return best_size < initial_size;
             }
 
             int surface_union(const candidates &volumes, const math::bounding_box &bounds)
@@ -1194,7 +1195,18 @@ namespace bsp
                 optimize_roots(models, 2);
                 optimize_roots(models, 3);
                 optimize_roots(models, 4);
-                for (std::uint32_t seed : {17u,193u,1021u}) optimize_roots(models, 1, seed);
+                // Neutral reorders expose new strict reductions; alternate
+                // both searches while retaining their completed smaller graphs.
+                // Bound the outer schedule as well as each individual pass.
+                for (std::uint32_t round = 0; round < 8; ++round)
+                {
+                    bool improved = false;
+                    for (std::uint32_t seed : {17u,193u,1021u})
+                        improved |= optimize_roots(models, 1, seed + round * 4099u);
+                    for (int level = 1; level <= 4; ++level)
+                        improved |= optimize_roots(models, level);
+                    if (!improved) break;
+                }
                 std::vector<format::dclipnode_t> output;
                 std::vector<int> remap(nodes.size(), std::numeric_limits<int>::min()), plane_remap(planes.size(), -1);
                 // Original plane indices are also referenced by draw nodes/faces.

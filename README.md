@@ -385,10 +385,11 @@ Predicates with exactly identical engine dot products use their ordered distance
 thresholds to remove implied decisions, with the axial fast paths kept separate.
 Trial accounting follows changed ancestors and shared references; unfinished
 trials leave the completed graph intact.
-Three deterministic exploration passes also allow equal-size rewrites, with
-at most 256 accepted steps each, and retain the smallest completed graph. This
-can expose reductions beyond a greedy plane-order plateau without increasing
-the emitted node count or changing predicate results.
+Up to eight deterministic rounds alternate three exploration passes with strict
+plane-order compaction. Exploration permits equal-size rewrites, with at most
+256 accepted steps per pass, and retains the smallest completed graph. A round
+with no reduction ends the search. This can expose reductions beyond a greedy
+plane-order plateau while preserving collision classification and output depth.
 Complex unions can increase compile time and clipnode usage;
 exceeding the geometry budget fails the compile.
 
