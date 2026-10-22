@@ -163,7 +163,8 @@ test("collision promotion preserves the output depth limit through shared subtre
     int tail = bsp::contents_empty;
     for (int i = 0; i < 1024; i++)
     {
-        format::dplane_t p{}; p.normal[2] = 1; p.type = 2; p.dist = float(i);
+        format::dplane_t p{}; p.normal[2] = 1;
+        p.normal[0] = float(0.01 + 0.000001*i); p.type = 5; p.dist = float(i);
         map.planes.push_back(p);
         format::dclipnode_t n{}; n.planenum = i;
         n.children[0] = (short)tail; n.children[1] = bsp::contents_solid;
@@ -235,6 +236,50 @@ test("collision graph search crosses equal-size rewrites to reduce repeated pred
             for (double y : {-1.,0.,1.})
                 for (double z : {-1.,0.,1.})
                     expect(contents(map,0,h,{x,y,z}) == contents(original,0,h,{x,y,z}));
+}
+
+test("collision threshold implications retain strict back sides and exact normal groups")
+{
+    for (bool axial : {false, true})
+    for (bool front_side : {false, true})
+    for (bool same_normal : {false, true})
+    {
+        auto map = solid_world();
+        format::dplane_t p{}, q{};
+        p.normal[0] = 1; p.type = axial ? 0 : 3;
+        if (!axial) p.normal[1] = float(0.125);
+        q = p; q.dist = front_side ? -1.f : 1.f;
+        if (!same_normal)
+        {
+            q.type = 3;
+            q.normal[1] += float(0.00001);
+        }
+        map.planes = {p,q};
+        format::dclipnode_t root{}, child{};
+        root.planenum = 0; child.planenum = 1;
+        int side = front_side ? 0 : 1;
+        root.children[side] = 1; root.children[1-side] = bsp::contents_empty;
+        child.children[side] = bsp::contents_water;
+        child.children[1-side] = bsp::contents_empty;
+        map.clipnodes = {root,child}; map.models[0].headnode[1] = 0;
+        const auto original = map;
+        bsp::trim_group g; g.model = 1;
+        g.targets = g.guards = {box({-2,-2,-2},{2,2,2})};
+        bsp::bsp_state state; state.map = &map; state.trim_groups = {g};
+        bsp::trim_legacy_collision(state);
+        expect(map.clipnodes.size() == (same_normal ? 1u : 2u));
+        for (double x : {-2.,-1.,-1e-9,0.,1e-9,1.,2.})
+            for (double y : {-1e7,-1.,0.,1.,1e7})
+            {
+                expect(contents(map,0,1,{x,y,0}) == contents(original,0,1,{x,y,0}));
+                // Also place points exactly on each disk plane.
+                for (const auto &plane : original.planes)
+                {
+                    double px = plane.dist - (plane.type < 3 ? 0 : double(plane.normal[1])*y);
+                    expect(contents(map,0,1,{px,y,0}) == contents(original,0,1,{px,y,0}));
+                }
+            }
+    }
 }
 
 test("collision graph search preserves shared repeated predicates across all roots")

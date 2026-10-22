@@ -381,6 +381,8 @@ Final graph compaction reorders plane predicates using exact cofactors, searchin
 candidate planes up to four levels below each node. A bounded search accepts a
 rewrite only when the total reachable clipnode count across all model/hull roots
 decreases and the output depth limit is respected, preserving plane ties.
+Predicates with exactly identical engine dot products use their ordered distance
+thresholds to remove implied decisions, with the axial fast paths kept separate.
 Trial accounting follows changed ancestors and shared references; unfinished
 trials leave the completed graph intact.
 Three deterministic exploration passes also allow equal-size rewrites, with

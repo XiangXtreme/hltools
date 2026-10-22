@@ -535,6 +535,24 @@ namespace bsp
                 nodes.resize(checkpoint);
             }
 
+            int forced_side(int known, bool front, int tested) const
+            {
+                const auto &p = planes[(size_t)known], &q = planes[(size_t)tested];
+                // Identical engine dot products have monotone thresholds.
+                // Keep axial fast paths separate and require exact normals;
+                // nearly parallel or reversed planes are not interchangeable.
+                if (p.type < 3 || q.type < 3)
+                {
+                    if (p.type != q.type) return -1;
+                }
+                else
+                    for (int a = 0; a < 3; ++a)
+                        if (p.normal[a] != q.normal[a]) return -1;
+                if (front && q.dist <= p.dist) return 0;
+                if (!front && q.dist >= p.dist) return 1;
+                return -1;
+            }
+
             void optimize_roots(std::vector<format::dmodel_t> &models, int levels,
                                 std::uint32_t seed = 0)
             {
@@ -634,8 +652,9 @@ namespace bsp
                                 if (found != cofactors.end()) return found->second;
                                 const auto child = nodes[(size_t)old];
                                 int result;
-                                if (child.plane == splitter)
-                                    result = restrict(side ? child.front : child.back, side, depth + 1);
+                                int forced = forced_side(splitter, side, child.plane);
+                                if (forced >= 0)
+                                    result = restrict(forced ? child.back : child.front, side, depth + 1);
                                 else
                                 {
                                     int cf = restrict(child.front, side, depth + 1);
@@ -697,9 +716,10 @@ namespace bsp
                             // live, so trial cost is proportional to changed paths.
                             for (int root : candidate) reference(root, true, 0);
                             for (int root : roots) reference(root, false, 0);
-                            // Shannon factoring is exact for every predicate value,
-                            // including distance == 0. Measure all model/hull roots:
-                            // a shared old subtree may remain live elsewhere.
+                            // Cofactors preserve the engine's ordered thresholds
+                            // for each identical dot product, including distance
+                            // == 0. Count every model/hull root: a shared old
+                            // subtree may remain live elsewhere.
                             if (!stopped && work < work_limit
                                 && (count < live.size() || (explore && count == live.size()
                                     && explored.find(candidate) == explored.end())))
