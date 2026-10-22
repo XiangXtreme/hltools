@@ -82,6 +82,9 @@ namespace csg
         int clipnode_detail_level = 0;
         int coplanar_priority = 0;
         content contents = content::empty;
+        // func_detail zhlt_cliptype override as a clip_type value; -1 inherits
+        // the global -cliptype option
+        int local_clip = -1;
         // generated studio prisms can be much smaller than a hand drawn brush,
         // so the face area cull uses a stricter threshold for them
         bool generated_studio = false;

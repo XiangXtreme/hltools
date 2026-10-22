@@ -73,6 +73,8 @@ namespace csg
             return "precise";
         case clip_type::legacy:
             return "legacy";
+        case clip_type::inherit:
+            return "inherit";
         default:
             return "unknown";
         }

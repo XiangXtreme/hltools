@@ -1543,6 +1543,14 @@ namespace csg
         return out;
     }
 
+    brush_build_options clip_options_for_brush(const map_brush &brush,
+                                               brush_build_options options)
+    {
+        if (brush.local_clip >= (int)clip_type::inherit)
+            options.clip = (clip_type)brush.local_clip;
+        return options;
+    }
+
     built_entity build_entity_brushes(map_source &map,
                                       int entity_num,
                                       plane_store &planes,
@@ -1560,7 +1568,8 @@ namespace csg
         for (int i = 0; i < entity.num_brushes; i++)
         {
             const map_brush &brush = map.brushes[(size_t)entity.first_brush + i];
-            out.brushes.push_back(create_brush(map, brush, planes, entity.origin, texinfos, options));
+            out.brushes.push_back(create_brush(map, brush, planes, entity.origin, texinfos,
+                                               clip_options_for_brush(brush, options)));
         }
 
         return out;

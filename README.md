@@ -339,7 +339,7 @@ hltools csg [options] <map>
 | Textures | `-nowadautodetect` | Keep unused WADs in the written worldspawn WAD list |
 | Textures | `-wadcfgfile <file>` | Read WAD paths from a configuration file |
 | Textures | `-wadconfig <name>` | Select a named block from the WAD configuration |
-| Geometry | `-cliptype <type>` | `smallest`, `normalized`, `simple`, `precise`, or `legacy`; default `simple` |
+| Geometry | `-cliptype <type>` | `smallest`, `normalized`, `simple`, `precise`, or `legacy`; default `simple`. A `func_detail` entity can override it with `zhlt_cliptype`; `func_group` and unknown values inherit the global setting |
 | Geometry | `-noclip` | Do not create clipping hulls |
 | Geometry | `-noskyclip` | Do not grow invisible clip copies from sky brushes |
 | Geometry | `-scale <n>` | Scale the whole map around the origin |

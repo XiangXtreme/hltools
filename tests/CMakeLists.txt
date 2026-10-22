@@ -126,6 +126,7 @@ add_hltools_unit(unit_bsp
 add_hltools_unit(unit_csg
     PREFIX "unit.csg."
     SOURCES
+        unit/csg/cliptype.cpp
         unit/csg/map_post.cpp
         unit/csg/map_parser.cpp
         unit/csg/studio_bsp.cpp

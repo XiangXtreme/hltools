@@ -8,6 +8,8 @@
 #include <utility>
 #include <vector>
 
+#include "csg.h"
+
 #include "../common/error.h"
 #include "../common/filesystem.h"
 #include "../common/log.h"
@@ -107,7 +109,8 @@ namespace csg
             map_brush solid_brush = brush;
             solid_brush.contents = content::solid;
             built_brush built = create_brush(map, solid_brush, planes, math::vec3v{},
-                                             texinfos, brush_options);
+                                             texinfos,
+                                             clip_options_for_brush(solid_brush, brush_options));
             return built.hulls[0].bounds;
         }
 
@@ -264,6 +267,27 @@ namespace csg
 
             std::vector<map_brush> moved(map.brushes.begin() + first,
                                          map.brushes.begin() + first + new_brushes);
+
+            // func_detail may override the global clip type for its brushes;
+            // func_group keeps inheriting, matching the reference
+            if (std::strcmp(entity.value("classname"), "func_detail") == 0)
+            {
+                clip_type local = clip_type::inherit;
+                const char *value = entity.value("zhlt_cliptype");
+                if (*value && !parse_clip_type(value, local))
+                {
+                    logging::warn("entity %i: unknown zhlt_cliptype '%s'; using the "
+                                  "global clip type",
+                                  entity_num, value);
+                    local = clip_type::inherit;
+                }
+                if (local != clip_type::inherit)
+                {
+                    for (map_brush &brush : moved)
+                        brush.local_clip = (int)local;
+                }
+            }
+
             for (map_brush &brush : moved)
             {
                 brush.entity_num = 0;

@@ -97,6 +97,7 @@ namespace tools
                 "geometry\n"
                 "  -cliptype <type>      smallest | normalized | simple | precise | legacy\n"
                 "                                                       (default: simple)\n"
+                "                        func_detail may override with zhlt_cliptype\n"
                 "  -noclip               don't create the clipping hulls\n"
                 "  -noskyclip            don't clip the world with sky brushes\n"
                 "  -scale <n>            scale the whole map\n"

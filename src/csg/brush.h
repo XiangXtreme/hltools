@@ -80,6 +80,7 @@ namespace csg
 
     enum class clip_type
     {
+        inherit, // per brush marker, resolves to the global option
         smallest,
         normalized,
         simple,
@@ -153,6 +154,11 @@ namespace csg
                                const plane_store &planes,
                                std::vector<brush_face> faces,
                                vec_t world_extent = 65536);
+
+    // a func_detail entity may override the global -cliptype through
+    // zhlt_cliptype; every other brush inherits the command line setting
+    brush_build_options clip_options_for_brush(const map_brush &brush,
+                                               brush_build_options options);
 
     std::vector<brush_face> make_bounding_clip_planes(const brush_hull &hull0,
                                                       plane_store &planes,
