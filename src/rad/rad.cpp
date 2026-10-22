@@ -647,6 +647,14 @@ namespace rad
         {
             format::map_data &map = *state.map;
 
+            // clip-only models have no hull 0 faces; there is nothing to light
+            // and some passes assume at least one surface exists
+            if (map.faces.empty())
+            {
+                logging::warn("RAD: bsp has no faces to light; skipping");
+                return;
+            }
+
             load_planes(state);
             make_tnodes(state);
             create_opaque_nodes(state);
