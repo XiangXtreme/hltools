@@ -108,6 +108,8 @@ namespace bsp
         // Disk planes use float coefficients. Treat their roundoff-scale
         // slivers consistently during union pruning and fragment scoring.
         constexpr double union_epsilon = math::normal_epsilon;
+        constexpr size_t max_surface_volumes = 1024;
+        constexpr size_t max_surface_work = 16000000;
         using point = math::vec3d;
         using polygon = std::vector<point>;
         using cell = std::vector<polygon>;
@@ -323,6 +325,200 @@ namespace bsp
                 std::vector<int> sides;
             };
 
+            struct surface { int plane; polygon vertices; };
+
+            double twice_area(const polygon &vertices)
+            {
+                point cross{};
+                for (size_t i = 1; i + 1 < vertices.size(); i++)
+                    cross += math::cross(vertices[i] - vertices[0], vertices[i+1] - vertices[0]);
+                return math::length(cross);
+            }
+
+            polygon half_polygon(const polygon &vertices, const math::plane &p, bool back)
+            {
+                polygon out;
+                for (size_t i = 0; i < vertices.size(); i++)
+                {
+                    const auto &a = vertices[i], &b = vertices[(i+1) % vertices.size()];
+                    double da = p.distance_to(a), db = p.distance_to(b);
+                    if (back ? da <= 0 : da >= 0) out.push_back(a);
+                    if ((da < 0 && db > 0) || (da > 0 && db < 0))
+                        out.push_back(a + (b-a) * (da / (da-db)));
+                }
+                return out;
+            }
+
+            std::pair<double, double> polygon_range(const polygon &vertices, const math::plane &p)
+            {
+                double lo = std::numeric_limits<double>::infinity(), hi = -lo;
+                for (const auto &v : vertices)
+                {
+                    double d = p.distance_to(v);
+                    lo = std::min(lo, d); hi = std::max(hi, d);
+                }
+                return {lo, hi};
+            }
+
+            bool subtract_volume(const surface &face, const std::vector<int> &volume,
+                                 bool keep_coplanar, std::vector<surface> &outside, size_t &work)
+            {
+                polygon inside = face.vertices;
+                // Equal outward faces have one owner; opposite faces are an
+                // internal seam and both are removed from the union surface.
+                for (int id : volume)
+                {
+                    if (++work > max_surface_work) return false;
+                    const auto &p = geometric_planes[(size_t)id];
+                    auto r = polygon_range(inside, p);
+                    if (r.first >= -union_epsilon)
+                    {
+                        bool coplanar = r.second <= union_epsilon
+                            && std::fabs(math::dot(p.normal,
+                                geometric_planes[(size_t)face.plane].normal)) > 1-1e-8;
+                        if (!coplanar || (keep_coplanar && math::dot(p.normal,
+                            geometric_planes[(size_t)face.plane].normal) > 0))
+                        { outside.push_back(face); return true; }
+                    }
+                }
+                for (int id : volume)
+                {
+                    if (++work > max_surface_work) return false;
+                    const auto &p = geometric_planes[(size_t)id];
+                    auto r = polygon_range(inside, p);
+                    if (r.second <= union_epsilon) continue;
+                    polygon part = half_polygon(inside, p, false);
+                    if (part.size() >= 3 && twice_area(part) > union_epsilon*union_epsilon)
+                        outside.push_back({face.plane, std::move(part)});
+                    inside = half_polygon(inside, p, true);
+                    if (inside.size() < 3) return true;
+                }
+                return true;
+            }
+
+            // Exposed faces guide the split order. Whole-cell halfspace tests
+            // certify the contents, including when boundary clipping removes
+            // a very thin face or several brushes jointly cover the cell.
+            int build_surfaces(const cell &region, std::vector<surface> faces,
+                               std::vector<fragment> fragments, int depth)
+            {
+                if (++visits > 2000000 || depth > 768)
+                    err::fatal("exactunion: surface subdivision budget exceeded");
+                std::vector<fragment> active;
+                for (auto &frag : fragments)
+                {
+                    candidates remaining{std::move(frag.sides)};
+                    if (prune(remaining, region, union_epsilon)) return contents_solid;
+                    if (remaining.empty()) continue;
+                    frag.sides = std::move(remaining[0]);
+                    active.push_back(std::move(frag));
+                }
+                if (active.empty()) return contents_empty;
+                std::vector<int> splitters;
+                for (const auto &face : faces)
+                {
+                    auto r = range(region, geometric_planes[(size_t)face.plane]);
+                    if (r.first < -union_epsilon && r.second > union_epsilon)
+                        splitters.push_back(face.plane);
+                }
+                if (splitters.empty()) return build_union(region, std::move(active), depth+1);
+                std::sort(splitters.begin(), splitters.end());
+                splitters.erase(std::unique(splitters.begin(), splitters.end()), splitters.end());
+                int splitter = splitters[0];
+                double best = std::numeric_limits<double>::infinity();
+                std::vector<double> areas;
+                // Area weights keep tessellation fragments from dominating
+                // the score merely because a face has been cut into pieces.
+                for (const auto &face : faces) areas.push_back(twice_area(face.vertices));
+                size_t samples = std::min<size_t>(24, splitters.size());
+                for (size_t i = 0; i < samples; i++)
+                {
+                    int id = splitters[i * splitters.size() / samples];
+                    double front = 0, back = 0, cuts = 0;
+                    for (size_t j = 0; j < faces.size(); j++)
+                    {
+                        const auto &face = faces[j];
+                        auto r = polygon_range(face.vertices, geometric_planes[(size_t)id]);
+                        if (r.first >= -union_epsilon && r.second <= union_epsilon) continue;
+                        if (r.second <= union_epsilon) back += areas[j];
+                        else if (r.first >= -union_epsilon) front += areas[j];
+                        else cuts += areas[j];
+                    }
+                    double score = 20*cuts + std::fabs(front-back);
+                    if (score < best) { best = score; splitter = id; }
+                }
+                const auto p = geometric_planes[(size_t)splitter];
+                std::vector<surface> front, back;
+                for (auto &face : faces)
+                {
+                    auto r = polygon_range(face.vertices, p);
+                    if (r.first >= -union_epsilon && r.second <= union_epsilon) continue;
+                    if (r.second <= union_epsilon) back.push_back(std::move(face));
+                    else if (r.first >= -union_epsilon) front.push_back(std::move(face));
+                    else
+                    {
+                        front.push_back({face.plane, half_polygon(face.vertices, p, false)});
+                        back.push_back({face.plane, half_polygon(face.vertices, p, true)});
+                    }
+                }
+                std::vector<fragment> front_fragments, back_fragments;
+                for (auto &frag : active)
+                {
+                    auto r = range(frag.geometry, p);
+                    if (r.first >= -union_epsilon) front_fragments.push_back(std::move(frag));
+                    else if (r.second <= union_epsilon) back_fragments.push_back(std::move(frag));
+                    else
+                    {
+                        front_fragments.push_back({half_cell(frag.geometry, p, false), frag.sides});
+                        back_fragments.push_back({half_cell(frag.geometry, p, true), std::move(frag.sides)});
+                    }
+                }
+                int f = build_surfaces(half_cell(region, p, false), std::move(front), std::move(front_fragments), depth+1);
+                int b = build_surfaces(half_cell(region, p, true), std::move(back), std::move(back_fragments), depth+1);
+                return node(splitter, f, b);
+            }
+
+            int surface_union(const candidates &volumes, const math::bounding_box &bounds)
+            {
+                // Boundary subtraction is quadratic in the input volumes.
+                // Keep the full fragment construction available for large sets.
+                if (volumes.size() > max_surface_volumes) return volume_union(volumes, bounds);
+                std::vector<surface> faces;
+                std::vector<fragment> fragments;
+                size_t work = 0;
+                for (size_t i = 0; i < volumes.size(); i++)
+                {
+                    cell geometry = box_cell(bounds);
+                    for (int id : volumes[i]) geometry = half_cell(geometry, geometric_planes[(size_t)id], true);
+                    if (geometry.size() >= 4) fragments.push_back({geometry, volumes[i]});
+                    for (int id : volumes[i])
+                    {
+                        polygon face;
+                        double largest = union_epsilon * union_epsilon;
+                        for (const auto &vertices : geometry)
+                        {
+                            auto r = polygon_range(vertices, geometric_planes[(size_t)id]);
+                            if (r.first < -epsilon || r.second > epsilon) continue;
+                            double size = twice_area(vertices);
+                            if (size > largest) { largest = size; face = vertices; }
+                        }
+                        if (face.empty()) continue;
+                        std::vector<surface> visible{{id, std::move(face)}};
+                        for (size_t j = 0; j < volumes.size() && !visible.empty(); j++)
+                        {
+                            if (i == j) continue;
+                            std::vector<surface> next;
+                            for (const auto &part : visible)
+                                if (!subtract_volume(part, volumes[j], i < j, next, work))
+                                    return volume_union(volumes, bounds);
+                            visible = std::move(next);
+                        }
+                        for (auto &part : visible) faces.push_back(std::move(part));
+                    }
+                }
+                return build_surfaces(box_cell(bounds), std::move(faces), std::move(fragments), 0);
+            }
+
             // Only planes with a non-collinear face remain splitter candidates.
             // Supporting edge/vertex planes and faces removed by earlier cuts
             // are already implied by the region and the surviving faces.
@@ -529,6 +725,34 @@ namespace bsp
                 return build_union(box_cell(bounds), std::move(fragments), 0);
             }
 
+            // Express only retained solid leaves as convex volumes. Building
+            // them together with the additions removes their shared boundaries
+            // before the union tree is partitioned.
+            bool solid_volumes(int root, const cell &region, std::vector<int> sides,
+                               candidates &volumes, int depth)
+            {
+                if (++visits > 2000000 || depth > 768) err::fatal("exactunion: solid leaf budget exceeded");
+                if (volumes.size() >= max_surface_volumes) return false;
+                if (root < 0)
+                {
+                    if (root == contents_solid) volumes.push_back(std::move(sides));
+                    return true;
+                }
+                auto n = nodes[(size_t)root];
+                auto p = geometric_planes[(size_t)n.plane];
+                auto r = range(region, p);
+                if (r.first >= 0) return solid_volumes(n.front, region, std::move(sides), volumes, depth+1);
+                if (r.second <= 0) return solid_volumes(n.back, region, std::move(sides), volumes, depth+1);
+                auto reverse = planes[(size_t)n.plane];
+                for (float &v : reverse.normal) v = -v;
+                reverse.dist = -reverse.dist;
+                if (reverse.type < 3) reverse.type += 3;
+                sides.push_back(add_plane(reverse));
+                if (!solid_volumes(n.front, half_cell(region, p, false), sides, volumes, depth+1)) return false;
+                sides.back() = n.plane;
+                return solid_volumes(n.back, half_cell(region, p, true), std::move(sides), volumes, depth+1);
+            }
+
         public:
             explicit trimmer(format::map_data &m) : map(m)
             {
@@ -593,8 +817,23 @@ namespace bsp
                     int coverage = volume_union(guards, bounds);
                     std::map<int, int> cache;
                     result = retain_covered_solid(original, coverage, box_cell(bounds), cache, 0);
-                    int addition = volume_union(additions, bounds);
-                    result = overlay(result, addition, box_cell(bounds), 0);
+                    candidates combined = additions;
+                    std::vector<int> sides;
+                    for (int a = 0; a < 3; a++)
+                        for (int side = 0; side < 2; side++)
+                        {
+                            format::dplane_t p{};
+                            p.normal[a] = side ? 1 : -1;
+                            p.dist = side ? bounds.maxs[a] : -bounds.mins[a];
+                            p.type = side ? a : a+3;
+                            sides.push_back(add_plane(p));
+                        }
+                    if (solid_volumes(result, box_cell(bounds), std::move(sides), combined, 0))
+                    {
+                        int solid = surface_union(combined, bounds);
+                        result = overlay(without_solid(original, cache), solid, box_cell(bounds), 0);
+                    }
+                    else result = overlay(result, surface_union(additions, bounds), box_cell(bounds), 0);
                     logging::info("exactunion: model %d hull %d, %zu exact expansions\n",
                         g.model, g.hull, g.additions.size());
                 }

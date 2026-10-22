@@ -302,3 +302,94 @@ test("exactunion prunes outside branches without changing distant contents")
             for (double pz : {-1e12,-1000.,1000.,1e12})
                 expect(contents(map,0,1,{px,py,pz}) == contents(original,0,1,{px,py,pz}));
 }
+
+test("exactunion keeps cavities and disconnected solids through shared boundary clipping")
+{
+    auto map = solid_world();
+    bsp::trim_group g;
+    g.targets = {box({-24,-24,-24},{24,24,24})};
+    for (int axis = 0; axis < 3; axis++)
+        for (int side = 0; side < 2; side++)
+        {
+            math::vec3v lo{-8,-8,-8}, hi{8,8,8};
+            if (side) lo[axis] = 6;
+            else hi[axis] = -6;
+            g.additions.push_back(box(lo, hi));
+        }
+    g.additions.push_back(g.additions[0]); // coincident outward faces
+    g.additions.push_back(box({8,-8,-8},{12,8,8})); // opposite faces at the join
+    g.additions.push_back(box({16,16,16},{20,20,20}));
+    g.guards = g.additions;
+    bsp::bsp_state state; state.map = &map; state.trim_groups = {g};
+    bsp::trim_legacy_collision(state);
+    for (double x = -21.75; x < 22; x += 1)
+        for (double y = -21.75; y < 22; y += 1)
+            for (double z = -21.75; z < 22; z += 1)
+            {
+                bool shell = std::fabs(x) < 8 && std::fabs(y) < 8 && std::fabs(z) < 8
+                    && (std::fabs(x) > 6 || std::fabs(y) > 6 || std::fabs(z) > 6);
+                bool joined = x > 8 && x < 12 && std::fabs(y) < 8 && std::fabs(z) < 8;
+                bool separate = x > 16 && x < 20 && y > 16 && y < 20 && z > 16 && z < 20;
+                expect(contents(map,0,1,{x,y,z})
+                    == (shell || joined || separate ? bsp::contents_solid : bsp::contents_empty));
+            }
+}
+
+test("exactunion preserves a tessellated nonplanar height field")
+{
+    auto map = solid_world();
+    bsp::trim_group g;
+    auto height = [](int x, int y) { return 4. + ((x*x + 3*y*y + x*y) % 7); };
+    const double diagonal = 1 / std::sqrt(2.0);
+    for (int x = 0; x < 6; x++)
+        for (int y = 0; y < 6; y++)
+            for (int side = 0; side < 2; side++)
+            {
+                auto v = box({4.*x,4.*y,-4},{4.*(x+1),4.*(y+1),16});
+                double a = (side ? height(x+1,y+1)-height(x,y+1) : height(x+1,y)-height(x,y))/4;
+                double b = (side ? height(x+1,y+1)-height(x+1,y) : height(x,y+1)-height(x,y))/4;
+                double c = side ? height(x+1,y+1)-4*a*(x+1)-4*b*(y+1) : height(x,y)-4*a*x-4*b*y;
+                double scale = 1/std::sqrt(a*a+b*b+1);
+                v.planes.push_back({{-a*scale,-b*scale,scale},c*scale});
+                v.planes.push_back(side
+                    ? math::plane{{-diagonal,-diagonal,0},-4*(x+y+1)*diagonal}
+                    : math::plane{{diagonal,diagonal,0},4*(x+y+1)*diagonal});
+                g.additions.push_back(v);
+            }
+    g.guards = g.targets = g.additions;
+    bsp::bsp_state state; state.map = &map; state.trim_groups = {g};
+    bsp::trim_legacy_collision(state);
+    for (double x = -0.75; x < 25; x += 0.5)
+        for (double y = -0.75; y < 25; y += 0.5)
+            for (double z : {-4.25,-3.25,3.125,5.125,7.125,9.125,11.125})
+            {
+                double top = -100;
+                if (x > 0 && x < 24 && y > 0 && y < 24)
+                {
+                    int ix = int(x/4), iy = int(y/4);
+                    double u = x/4-ix, v = y/4-iy;
+                    top = u+v <= 1
+                        ? height(ix,iy)*(1-u-v)+height(ix+1,iy)*u+height(ix,iy+1)*v
+                        : height(ix+1,iy+1)*(u+v-1)+height(ix,iy+1)*(1-u)+height(ix+1,iy)*(1-v);
+                }
+                expect(contents(map,0,1,{x,y,z})
+                    == (z >= -4 && z <= top ? bsp::contents_solid : bsp::contents_empty));
+            }
+}
+
+test("exactunion handles large repeated brush sets with disconnected coverage")
+{
+    auto map = solid_world();
+    bsp::trim_group g;
+    g.targets = {box({-12,-12,-12},{12,12,12})};
+    g.additions.assign(1100, box({-8,-8,-8},{-4,-4,-4}));
+    g.additions.push_back(box({4,4,4},{8,8,8}));
+    g.guards = g.additions;
+    bsp::bsp_state state; state.map = &map; state.trim_groups = {g};
+    bsp::trim_legacy_collision(state);
+    expect(contents(map,0,1,{-6,-6,-6}) == bsp::contents_solid);
+    expect(contents(map,0,1,{6,6,6}) == bsp::contents_solid);
+    expect(contents(map,0,1,{0,0,0}) == bsp::contents_empty);
+    expect(contents(map,0,1,{-6,6,-6}) == bsp::contents_empty);
+    expect(map.clipnodes.size() < 30);
+}

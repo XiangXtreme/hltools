@@ -371,7 +371,10 @@ is retained only where source brush expansions or captured exterior fill cover
 it. Unselected brushes keep their original expansion; active custom hull shapes
 and draw geometry are preserved. The exact solid union overrides liquid contents
 only inside the selected expansions. Both stages must support the version 2
-`.hsz` extension. Complex unions can increase compile time and clipnode usage;
+`.hsz` extension. Exposed union faces guide the split order, and retained solid
+regions are rebuilt together with the selected expansions to reduce redundant
+clipnodes. Contents classification keeps the complete volume constraints.
+Complex unions can increase compile time and clipnode usage;
 exceeding the geometry budget fails the compile.
 
 </details>
