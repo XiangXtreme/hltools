@@ -394,7 +394,9 @@ A bounded pass rebuilds windows of up to six plane predicates from their
 complete truth tables, treating deeper subtrees as opaque terminals. A subsequent
 eight-predicate pass keeps up to four realizations per subproblem to expose
 sharing between sibling branches. Candidate costs account for nodes already
-shared outside the window. Replacements are
+shared outside the window. Exact descendant sets are cached within each window,
+with at most one million stored node references before direct scoring resumes.
+Replacements are
 accepted only when all model/hull roots together use fewer nodes and satisfy
 the depth limit; incomplete trials are discarded.
 Complex unions can increase compile time and clipnode usage;

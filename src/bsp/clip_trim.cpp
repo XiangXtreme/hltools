@@ -612,18 +612,69 @@ namespace bsp
                 }
                 if (stopped) return root;
                 std::map<int, size_t> costs;
+                std::map<int, std::vector<int>> footprints;
+                size_t footprint_entries = 0;
+                constexpr size_t footprint_limit = 1000000;
+                const std::vector<int> empty_footprint;
+                auto free_node = [&](int id) {
+                    return id < 0 || ((size_t)id < references.size()
+                        && references[(size_t)id] > 0 && released.find(id) == released.end());
+                };
+                // Cache exact descendant sets so sibling candidates reuse their
+                // common work. Keep this optional cache bounded; large windows
+                // fall back to direct traversal with the same scoring function.
+                auto cache_footprint = [&](int id) {
+                    std::vector<int> pending{id};
+                    while (!pending.empty() && !stopped)
+                    {
+                        if (stop()) break;
+                        int next = pending.back();
+                        if (free_node(next) || footprints.find(next) != footprints.end())
+                        { pending.pop_back(); continue; }
+                        const auto n = nodes[(size_t)next];
+                        bool ready = true;
+                        for (int child : {n.front, n.back})
+                            if (!free_node(child) && footprints.find(child) == footprints.end())
+                            { pending.push_back(child); ready = false; }
+                        if (!ready) continue;
+                        const auto &f = free_node(n.front) ? empty_footprint : footprints.at(n.front);
+                        const auto &b = free_node(n.back) ? empty_footprint : footprints.at(n.back);
+                        size_t bound = f.size() + b.size() + 1;
+                        if (bound > footprint_limit - footprint_entries) return false;
+                        work += bound;
+                        if (work >= work_limit) { stopped = true; break; }
+                        std::vector<int> combined;
+                        combined.reserve(bound);
+                        size_t fi = 0, bi = 0;
+                        while (fi < f.size() || bi < b.size())
+                        {
+                            if (bi == b.size() || (fi < f.size() && f[fi] < b[bi]))
+                                combined.push_back(f[fi++]);
+                            else if (fi == f.size() || b[bi] < f[fi])
+                                combined.push_back(b[bi++]);
+                            else { combined.push_back(f[fi++]); ++bi; }
+                        }
+                        combined.insert(std::lower_bound(combined.begin(), combined.end(), next), next);
+                        footprint_entries += combined.size();
+                        costs.emplace(next, combined.size());
+                        footprints.emplace(next, std::move(combined));
+                        pending.pop_back();
+                    }
+                    return !stopped;
+                };
                 auto cost = [&](int id) {
                     auto found = costs.find(id);
                     if (found != costs.end()) return found->second;
+                    if (free_node(id)) { costs.emplace(id, 0); return size_t(0); }
+                    if (cache_footprint(id)) return costs.at(id);
+                    if (stopped) return size_t(0);
                     std::set<int> used;
                     std::vector<int> todo{id};
                     while (!todo.empty() && !stopped)
                     {
                         if (stop()) break;
                         int next = todo.back(); todo.pop_back();
-                        if (next < 0) continue;
-                        if ((size_t)next < references.size() && references[(size_t)next] > 0
-                            && released.find(next) == released.end()) continue;
+                        if (free_node(next)) continue;
                         if (!used.insert(next).second) continue;
                         const auto n = nodes[(size_t)next];
                         todo.push_back(n.front); todo.push_back(n.back);
