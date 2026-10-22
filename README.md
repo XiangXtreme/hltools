@@ -390,9 +390,11 @@ plane-order compaction. Exploration permits equal-size rewrites, with at most
 256 accepted steps per pass, and retains the smallest completed graph. A round
 with no reduction ends the search. This can expose reductions beyond a greedy
 plane-order plateau while preserving collision classification and output depth.
-A final bounded pass rebuilds windows of up to six plane predicates from their
-complete truth tables, treating deeper subtrees as opaque terminals. Candidate
-costs account for nodes already shared outside the window. Replacements are
+A bounded pass rebuilds windows of up to six plane predicates from their
+complete truth tables, treating deeper subtrees as opaque terminals. A subsequent
+eight-predicate pass keeps up to four realizations per subproblem to expose
+sharing between sibling branches. Candidate costs account for nodes already
+shared outside the window. Replacements are
 accepted only when all model/hull roots together use fewer nodes and satisfy
 the depth limit; incomplete trials are discarded.
 Complex unions can increase compile time and clipnode usage;

@@ -554,7 +554,7 @@ namespace bsp
             }
 
             int synthesize_window(int root, const std::vector<int> &references,
-                                  size_t &work, bool &stopped)
+                                  size_t &work, bool &stopped, int width, size_t alternatives)
             {
                 constexpr size_t work_limit = 64000000;
                 auto stop = [&]() {
@@ -589,7 +589,7 @@ namespace bsp
                     const auto n = nodes[(size_t)id];
                     if (std::find(variables.begin(), variables.end(), n.plane) == variables.end())
                     {
-                        if (variables.size() >= 6) continue;
+                        if (variables.size() >= (size_t)width) continue;
                         variables.push_back(n.plane);
                     }
                     pending.push_back(n.front); pending.push_back(n.back);
@@ -632,17 +632,17 @@ namespace bsp
                     return used.size();
                 };
                 using key = std::pair<std::vector<int>, std::vector<int>>;
-                std::map<key, int> cache;
-                std::function<int(const std::vector<int> &, const std::vector<int> &)> build
-                    = [&](const std::vector<int> &vars, const std::vector<int> &values) -> int {
-                    if (stop()) return root;
+                std::map<key, std::vector<int>> cache;
+                std::function<std::vector<int>(const std::vector<int> &, const std::vector<int> &)> build
+                    = [&](const std::vector<int> &vars, const std::vector<int> &values) -> std::vector<int> {
+                    if (stop()) return {root};
                     if (std::all_of(values.begin(), values.end(), [&](int i) { return i == values[0]; }))
-                        return values[0];
+                        return {values[0]};
                     key k{vars, values};
                     auto found = cache.find(k);
                     if (found != cache.end()) return found->second;
-                    size_t best_cost = std::numeric_limits<size_t>::max();
-                    int best = root;
+                    std::vector<int> candidates;
+                    std::set<int> unique;
                     for (size_t v = 0; v < vars.size() && !stopped; ++v)
                     {
                         std::vector<int> front, back, remaining = vars;
@@ -650,21 +650,33 @@ namespace bsp
                         for (size_t i = 0; i < values.size(); ++i)
                             (i & (size_t(1) << v) ? front : back).push_back(values[i]);
                         if (front == back) return build(remaining, front);
-                        int f = build(remaining, front), b = build(remaining, back);
+                        auto fronts = build(remaining, front), backs = build(remaining, back);
                         if (stopped) break;
-                        int candidate = node(vars[v], f, b);
-                        size_t count = cost(candidate);
-                        if (count < best_cost) { best = candidate; best_cost = count; }
+                        // Retain several realizations: a slightly larger child
+                        // can share enough nodes with its sibling to win overall.
+                        for (int f : fronts) for (int b : backs)
+                        {
+                            if (stop()) return {root};
+                            int candidate = node(vars[v], f, b);
+                            cost(candidate);
+                            if (unique.insert(candidate).second) candidates.push_back(candidate);
+                        }
                     }
-                    cache.emplace(std::move(k), best);
-                    return best;
+                    if (stopped) return {root};
+                    std::stable_sort(candidates.begin(), candidates.end(), [&](int a, int b) {
+                        return costs.at(a) < costs.at(b);
+                    });
+                    if (candidates.size() > alternatives) candidates.resize(alternatives);
+                    cache.emplace(std::move(k), candidates);
+                    return candidates;
                 };
-                return build(variables, table);
+                return build(variables, table).front();
             }
 
             bool optimize_roots(std::vector<format::dmodel_t> &models, int levels,
-                                std::uint32_t seed = 0, bool windows = false)
+                                std::uint32_t seed = 0, int window_width = 0, size_t alternatives = 1)
             {
+                const bool windows = window_width != 0;
                 std::vector<int> roots;
                 for (const auto &m : models)
                     for (int h = 1; h < num_hulls; h++) roots.push_back(m.headnode[h]);
@@ -776,7 +788,8 @@ namespace bsp
                                 return result;
                             };
                             int replacement;
-                            if (windows) replacement = synthesize_window(id, references, work, stopped);
+                            if (windows) replacement = synthesize_window(id, references, work, stopped,
+                                                                         window_width, alternatives);
                             else
                             {
                                 int front = restrict(id, true, 0), back = restrict(id, false, 0);
@@ -881,8 +894,8 @@ namespace bsp
                 for (auto &m : models)
                     for (int h = 1; h < num_hulls; h++) m.headnode[h] = best_roots[i++];
                 if (windows)
-                    logging::info("collision graph: %zu -> %zu nodes, %zu window trials (%s)\n",
-                        initial_size, best_size, trials,
+                    logging::info("collision graph: %zu -> %zu nodes, %zu width-%d window trials (%s)\n",
+                        initial_size, best_size, trials, window_width,
                         work >= work_limit || trials >= trial_limit || nodes.size() >= 1900000
                             ? "budget reached" : "complete");
                 else if (levels)
@@ -1329,7 +1342,9 @@ namespace bsp
                         improved |= optimize_roots(models, level);
                     if (!improved) break;
                 }
-                if (optimize_roots(models, 0, 0, true))
+                if (optimize_roots(models, 0, 0, 6))
+                    for (int level = 1; level <= 4; ++level) optimize_roots(models, level);
+                if (optimize_roots(models, 0, 0, 8, 4))
                     for (int level = 1; level <= 4; ++level) optimize_roots(models, level);
                 std::vector<format::dclipnode_t> output;
                 std::vector<int> remap(nodes.size(), std::numeric_limits<int>::min()), plane_remap(planes.size(), -1);
