@@ -110,6 +110,7 @@ namespace bsp
         constexpr double union_epsilon = math::normal_epsilon;
         constexpr size_t max_surface_volumes = 1024;
         constexpr size_t max_surface_work = 16000000;
+        constexpr size_t max_split_trial_work = 64000000;
         using point = math::vec3d;
         using polygon = std::vector<point>;
         using cell = std::vector<polygon>;
@@ -327,6 +328,24 @@ namespace bsp
 
             struct surface { int plane; polygon vertices; };
 
+            enum class split_order { sampled_area, area, face_count };
+            struct split_search
+            {
+                split_order order;
+                size_t work = 0, visits = 0;
+                bool stopped = false;
+            };
+
+            bool stop_trial(split_search &search, int depth)
+            {
+                if (search.order == split_order::sampled_area) return false;
+                // Trials have their own work limit and do not consume the
+                // subdivision budget needed to construct the remaining hulls.
+                if (++search.visits > 100000 || depth >= 768 || nodes.size() >= 1900000)
+                    search.stopped = true;
+                return search.stopped;
+            }
+
             double twice_area(const polygon &vertices)
             {
                 point cross{};
@@ -400,9 +419,11 @@ namespace bsp
             // certify the contents, including when boundary clipping removes
             // a very thin face or several brushes jointly cover the cell.
             int build_surfaces(const cell &region, std::vector<surface> faces,
-                               std::vector<fragment> fragments, int depth)
+                               std::vector<fragment> fragments, int depth, split_search &search)
             {
-                if (++visits > 2000000 || depth > 768)
+                // A trial is optional: its partial result is never published.
+                if (stop_trial(search, depth)) return contents_empty;
+                if (search.order == split_order::sampled_area && (++visits > 2000000 || depth > 768))
                     err::fatal("exactunion: surface subdivision budget exceeded");
                 std::vector<fragment> active;
                 for (auto &frag : fragments)
@@ -421,16 +442,18 @@ namespace bsp
                     if (r.first < -union_epsilon && r.second > union_epsilon)
                         splitters.push_back(face.plane);
                 }
-                if (splitters.empty()) return build_union(region, std::move(active), depth+1);
+                if (splitters.empty()) return build_union(region, std::move(active), depth+1, &search);
                 std::sort(splitters.begin(), splitters.end());
                 splitters.erase(std::unique(splitters.begin(), splitters.end()), splitters.end());
                 int splitter = splitters[0];
                 double best = std::numeric_limits<double>::infinity();
-                std::vector<double> areas;
-                // Area weights keep tessellation fragments from dominating
-                // the score merely because a face has been cut into pieces.
-                for (const auto &face : faces) areas.push_back(twice_area(face.vertices));
-                size_t samples = std::min<size_t>(24, splitters.size());
+                std::vector<double> weights;
+                // Area weights favor broad surfaces; face counts favor
+                // eliminating many boundary fragments in a single split.
+                for (const auto &face : faces)
+                    weights.push_back(search.order == split_order::face_count ? 1 : twice_area(face.vertices));
+                size_t samples = search.order == split_order::sampled_area
+                    ? std::min<size_t>(24, splitters.size()) : splitters.size();
                 for (size_t i = 0; i < samples; i++)
                 {
                     int id = splitters[i * splitters.size() / samples];
@@ -438,11 +461,14 @@ namespace bsp
                     for (size_t j = 0; j < faces.size(); j++)
                     {
                         const auto &face = faces[j];
+                        if (search.order != split_order::sampled_area
+                            && (search.work += face.vertices.size()) > max_split_trial_work)
+                        { search.stopped = true; return contents_empty; }
                         auto r = polygon_range(face.vertices, geometric_planes[(size_t)id]);
                         if (r.first >= -union_epsilon && r.second <= union_epsilon) continue;
-                        if (r.second <= union_epsilon) back += areas[j];
-                        else if (r.first >= -union_epsilon) front += areas[j];
-                        else cuts += areas[j];
+                        if (r.second <= union_epsilon) back += weights[j];
+                        else if (r.first >= -union_epsilon) front += weights[j];
+                        else cuts += weights[j];
                     }
                     double score = 20*cuts + std::fabs(front-back);
                     if (score < best) { best = score; splitter = id; }
@@ -473,9 +499,37 @@ namespace bsp
                         back_fragments.push_back({half_cell(frag.geometry, p, true), std::move(frag.sides)});
                     }
                 }
-                int f = build_surfaces(half_cell(region, p, false), std::move(front), std::move(front_fragments), depth+1);
-                int b = build_surfaces(half_cell(region, p, true), std::move(back), std::move(back_fragments), depth+1);
+                int f = build_surfaces(half_cell(region, p, false), std::move(front), std::move(front_fragments), depth+1, search);
+                if (search.stopped) return contents_empty;
+                int b = build_surfaces(half_cell(region, p, true), std::move(back), std::move(back_fragments), depth+1, search);
+                if (search.stopped) return contents_empty;
                 return node(splitter, f, b);
+            }
+
+            size_t reachable_nodes(int root) const
+            {
+                std::vector<bool> seen(nodes.size());
+                std::vector<int> pending{root};
+                size_t count = 0;
+                while (!pending.empty())
+                {
+                    int id = pending.back(); pending.pop_back();
+                    if (id < 0 || seen[(size_t)id]) continue;
+                    seen[(size_t)id] = true; count++;
+                    const auto &n = nodes[(size_t)id];
+                    pending.push_back(n.front); pending.push_back(n.back);
+                }
+                return count;
+            }
+
+            void discard_nodes(size_t checkpoint)
+            {
+                for (size_t i = checkpoint; i < nodes.size(); i++)
+                {
+                    const auto &n = nodes[i];
+                    node_ids.erase(std::make_tuple(n.plane, n.front, n.back));
+                }
+                nodes.resize(checkpoint);
             }
 
             int surface_union(const candidates &volumes, const math::bounding_box &bounds)
@@ -516,7 +570,21 @@ namespace bsp
                         for (auto &part : visible) faces.push_back(std::move(part));
                     }
                 }
-                return build_surfaces(box_cell(bounds), std::move(faces), std::move(fragments), 0);
+                split_search initial{split_order::sampled_area};
+                int best = build_surfaces(box_cell(bounds), faces, fragments, 0, initial);
+                size_t best_size = reachable_nodes(best);
+                // Compare complete trees of the same volumes. Changing the
+                // split order never relaxes the contents-classification tests.
+                for (auto order : {split_order::area, split_order::face_count})
+                {
+                    size_t checkpoint = nodes.size();
+                    split_search trial{order};
+                    int candidate = build_surfaces(box_cell(bounds), faces, fragments, 0, trial);
+                    size_t size = trial.stopped ? best_size : reachable_nodes(candidate);
+                    if (size < best_size) { best = candidate; best_size = size; }
+                    else discard_nodes(checkpoint);
+                }
+                return best;
             }
 
             // Only planes with a non-collinear face remain splitter candidates.
@@ -546,9 +614,12 @@ namespace bsp
             // Construct the union directly from convex fragments. Score real
             // fragment cuts, so adjoining brushes need not inherit the old BSP
             // split order. Region tests remove redundant supporting planes.
-            int build_union(const cell &region, std::vector<fragment> fragments, int depth)
+            int build_union(const cell &region, std::vector<fragment> fragments, int depth,
+                            split_search *search = nullptr)
             {
-                if (++visits > 2000000 || depth > 768)
+                if (search && stop_trial(*search, depth)) return contents_empty;
+                if ((!search || search->order == split_order::sampled_area)
+                    && (++visits > 2000000 || depth > 768))
                     err::fatal("exactunion: subdivision budget exceeded");
                 std::vector<fragment> active;
                 std::vector<int> splitters;
@@ -580,6 +651,9 @@ namespace bsp
                     size_t front = 0, back = 0, cuts = 0;
                     for (const auto &frag : active)
                     {
+                        if (search && search->order != split_order::sampled_area
+                            && (search->work += frag.geometry.size()) > max_split_trial_work)
+                        { search->stopped = true; return contents_empty; }
                         auto r = range(frag.geometry, geometric_planes[(size_t)id]);
                         if (r.second <= union_epsilon) back++;
                         else if (r.first >= -union_epsilon) front++;
@@ -602,8 +676,10 @@ namespace bsp
                         back.push_back({half_cell(frag.geometry, p, true), std::move(frag.sides)});
                     }
                 }
-                int f = build_union(half_cell(region, p, false), std::move(front), depth + 1);
-                int b = build_union(half_cell(region, p, true), std::move(back), depth + 1);
+                int f = build_union(half_cell(region, p, false), std::move(front), depth + 1, search);
+                if (search && search->stopped) return contents_empty;
+                int b = build_union(half_cell(region, p, true), std::move(back), depth + 1, search);
+                if (search && search->stopped) return contents_empty;
                 return node(splitter, f, b);
             }
 

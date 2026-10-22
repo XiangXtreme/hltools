@@ -393,3 +393,41 @@ test("exactunion handles large repeated brush sets with disconnected coverage")
     expect(contents(map,0,1,{-6,6,-6}) == bsp::contents_empty);
     expect(map.clipnodes.size() < 30);
 }
+
+test("exactunion preserves thin walls and a narrow connected passage across split orders")
+{
+    auto map = solid_world();
+    bsp::trim_group g;
+    g.targets = {box({-12,-12,-12},{12,12,12})};
+    // Alternate slopes force surface subdivision around both sides of a
+    // through passage. Its width and the thin wall exceed disk roundoff.
+    for (int i = 0; i < 8; i++)
+        for (int side = 0; side < 2; side++)
+        {
+            double x = -8 + 2.*i;
+            auto v = box({x,side ? 0.001 : -8.,-8},
+                         {x+2,side ? 8. : -0.001,8});
+            double slope = i % 2 ? -0.25 : 0.25;
+            double scale = 1/std::sqrt(1+slope*slope);
+            v.planes.push_back({{-slope*scale,0,scale},(4-slope*x)*scale});
+            g.additions.push_back(v);
+        }
+    g.additions.push_back(box({-8,9,-8},{8,9.002,8}));
+    g.guards = g.additions;
+    bsp::bsp_state state; state.map = &map; state.trim_groups = {g};
+    bsp::trim_legacy_collision(state);
+    for (double x = -7.875; x < 8; x += 0.25)
+    {
+        int segment = int((x+8)/2);
+        double top = 4 + (segment % 2 ? -0.25 : 0.25)*(x-(-8+2.*segment));
+        for (double y : {-8.01,-7.,-0.0011,-0.0009,0.,0.0009,0.0011,7.,8.01,
+                         8.9999,9.0001,9.001,9.0019,9.0021})
+            for (double z : {-8.01,-7.99,0.,top-0.001,top+0.001,7.99,8.01})
+            {
+                bool bank = std::fabs(y) > 0.001 && std::fabs(y) < 8 && z > -8 && z < top;
+                bool wall = y > 9 && y < 9.002 && z > -8 && z < 8;
+                expect(contents(map,0,1,{x,y,z})
+                    == (bank || wall ? bsp::contents_solid : bsp::contents_empty));
+            }
+    }
+}

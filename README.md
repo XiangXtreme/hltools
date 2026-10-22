@@ -374,6 +374,9 @@ only inside the selected expansions. Both stages must support the version 2
 `.hsz` extension. Exposed union faces guide the split order, and retained solid
 regions are rebuilt together with the selected expansions to reduce redundant
 clipnodes. Contents classification keeps the complete volume constraints.
+Within a fixed search budget, BSP compares area and face-count split orders
+and keeps the complete tree with fewer reachable nodes. An unfinished trial
+is discarded; the completed tree remains available.
 Complex unions can increase compile time and clipnode usage;
 exceeding the geometry budget fails the compile.
 
