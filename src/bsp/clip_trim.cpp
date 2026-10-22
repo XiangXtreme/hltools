@@ -553,15 +553,124 @@ namespace bsp
                 return -1;
             }
 
+            int synthesize_window(int root, const std::vector<int> &references,
+                                  size_t &work, bool &stopped)
+            {
+                constexpr size_t work_limit = 64000000;
+                auto stop = [&]() {
+                    if (++work >= work_limit || nodes.size() >= 1900000) stopped = true;
+                    return stopped;
+                };
+                // Descendants still referenced outside this window already
+                // occupy the output graph. Reusing them has no added cost.
+                std::set<int> released;
+                std::map<int, int> removed;
+                std::vector<int> dropping{root};
+                while (!dropping.empty() && !stopped)
+                {
+                    if (stop()) break;
+                    int id = dropping.back(); dropping.pop_back();
+                    if (!released.insert(id).second) continue;
+                    const auto n = nodes[(size_t)id];
+                    for (int child : {n.front, n.back})
+                        if (child >= 0 && ++removed[child] == references[(size_t)child])
+                            dropping.push_back(child);
+                }
+                // Treat unknown descendants as distinct opaque terminals.
+                // Every truth-table assignment is retained, so rebuilding a
+                // window preserves even geometrically unrealizable predicates.
+                std::vector<int> variables, pending{root};
+                std::set<int> seen;
+                for (size_t i = 0; i < pending.size() && !stopped; ++i)
+                {
+                    if (stop()) break;
+                    int id = pending[i];
+                    if (id < 0 || !seen.insert(id).second) continue;
+                    const auto n = nodes[(size_t)id];
+                    if (std::find(variables.begin(), variables.end(), n.plane) == variables.end())
+                    {
+                        if (variables.size() >= 6) continue;
+                        variables.push_back(n.plane);
+                    }
+                    pending.push_back(n.front); pending.push_back(n.back);
+                }
+                if (stopped) return root;
+                std::sort(variables.begin(), variables.end());
+                std::vector<int> table;
+                for (size_t assignment = 0; assignment < (size_t(1) << variables.size()); ++assignment)
+                {
+                    int id = root;
+                    while (id >= 0 && !stopped)
+                    {
+                        if (stop()) break;
+                        const auto n = nodes[(size_t)id];
+                        auto found = std::lower_bound(variables.begin(), variables.end(), n.plane);
+                        if (found == variables.end() || *found != n.plane) break;
+                        id = assignment & (size_t(1) << (found - variables.begin())) ? n.front : n.back;
+                    }
+                    table.push_back(id);
+                }
+                if (stopped) return root;
+                std::map<int, size_t> costs;
+                auto cost = [&](int id) {
+                    auto found = costs.find(id);
+                    if (found != costs.end()) return found->second;
+                    std::set<int> used;
+                    std::vector<int> todo{id};
+                    while (!todo.empty() && !stopped)
+                    {
+                        if (stop()) break;
+                        int next = todo.back(); todo.pop_back();
+                        if (next < 0) continue;
+                        if ((size_t)next < references.size() && references[(size_t)next] > 0
+                            && released.find(next) == released.end()) continue;
+                        if (!used.insert(next).second) continue;
+                        const auto n = nodes[(size_t)next];
+                        todo.push_back(n.front); todo.push_back(n.back);
+                    }
+                    costs.emplace(id, used.size());
+                    return used.size();
+                };
+                using key = std::pair<std::vector<int>, std::vector<int>>;
+                std::map<key, int> cache;
+                std::function<int(const std::vector<int> &, const std::vector<int> &)> build
+                    = [&](const std::vector<int> &vars, const std::vector<int> &values) -> int {
+                    if (stop()) return root;
+                    if (std::all_of(values.begin(), values.end(), [&](int i) { return i == values[0]; }))
+                        return values[0];
+                    key k{vars, values};
+                    auto found = cache.find(k);
+                    if (found != cache.end()) return found->second;
+                    size_t best_cost = std::numeric_limits<size_t>::max();
+                    int best = root;
+                    for (size_t v = 0; v < vars.size() && !stopped; ++v)
+                    {
+                        std::vector<int> front, back, remaining = vars;
+                        remaining.erase(remaining.begin() + v);
+                        for (size_t i = 0; i < values.size(); ++i)
+                            (i & (size_t(1) << v) ? front : back).push_back(values[i]);
+                        if (front == back) return build(remaining, front);
+                        int f = build(remaining, front), b = build(remaining, back);
+                        if (stopped) break;
+                        int candidate = node(vars[v], f, b);
+                        size_t count = cost(candidate);
+                        if (count < best_cost) { best = candidate; best_cost = count; }
+                    }
+                    cache.emplace(std::move(k), best);
+                    return best;
+                };
+                return build(variables, table);
+            }
+
             bool optimize_roots(std::vector<format::dmodel_t> &models, int levels,
-                                std::uint32_t seed = 0)
+                                std::uint32_t seed = 0, bool windows = false)
             {
                 std::vector<int> roots;
                 for (const auto &m : models)
                     for (int h = 1; h < num_hulls; h++) roots.push_back(m.headnode[h]);
                 size_t work = 0, trials = 0, steps = 0;
                 constexpr size_t work_limit = 64000000;
-                const size_t trial_limit = levels ? 65536 : 256;
+                const size_t trial_limit = levels || windows ? 65536 : 256;
                 const bool explore = seed != 0;
                 const size_t step_limit = explore ? 256 : std::numeric_limits<size_t>::max();
                 auto shuffle = [&](std::vector<int> &values) {
@@ -610,7 +719,8 @@ namespace bsp
                         if (work >= work_limit || trials >= trial_limit || nodes.size() >= 1900000) break;
                         const auto n = nodes[(size_t)id];
                         std::vector<int> splitters;
-                        if (levels)
+                        if (windows) splitters.push_back(n.plane);
+                        else if (levels)
                         {
                             std::vector<std::pair<int, int>> pending;
                             for (int child : {n.front, n.back})
@@ -665,9 +775,15 @@ namespace bsp
                                 cofactors.emplace(key, result);
                                 return result;
                             };
-                            int front = restrict(id, true, 0), back = restrict(id, false, 0);
+                            int replacement;
+                            if (windows) replacement = synthesize_window(id, references, work, stopped);
+                            else
+                            {
+                                int front = restrict(id, true, 0), back = restrict(id, false, 0);
+                                replacement = stopped ? id : node(splitter, front, back);
+                            }
                             if (stopped) { discard_nodes(checkpoint); break; }
-                            int replacement = node(splitter, front, back);
+                            if (replacement == id) { discard_nodes(checkpoint); continue; }
                             std::vector<bool> affected(checkpoint);
                             std::vector<int> pending{id};
                             while (!pending.empty())
@@ -764,9 +880,15 @@ namespace bsp
                 size_t i = 0;
                 for (auto &m : models)
                     for (int h = 1; h < num_hulls; h++) m.headnode[h] = best_roots[i++];
-                if (levels)
+                if (windows)
+                    logging::info("collision graph: %zu -> %zu nodes, %zu window trials (%s)\n",
+                        initial_size, best_size, trials,
+                        work >= work_limit || trials >= trial_limit || nodes.size() >= 1900000
+                            ? "budget reached" : "complete");
+                else if (levels)
                     logging::info("collision graph: %zu -> %zu nodes, %zu level-%d %s trials (%s)\n",
-                        initial_size, best_size, trials, levels, explore ? "plateau" : "plane-order",
+                        initial_size, best_size, trials, levels,
+                        explore ? "plateau" : "plane-order",
                         work >= work_limit || trials >= trial_limit || steps >= step_limit || nodes.size() >= 1900000
                             ? "budget reached" : "complete");
                 return best_size < initial_size;
@@ -1207,6 +1329,8 @@ namespace bsp
                         improved |= optimize_roots(models, level);
                     if (!improved) break;
                 }
+                if (optimize_roots(models, 0, 0, true))
+                    for (int level = 1; level <= 4; ++level) optimize_roots(models, level);
                 std::vector<format::dclipnode_t> output;
                 std::vector<int> remap(nodes.size(), std::numeric_limits<int>::min()), plane_remap(planes.size(), -1);
                 // Original plane indices are also referenced by draw nodes/faces.
