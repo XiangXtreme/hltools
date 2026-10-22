@@ -1,4 +1,7 @@
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <functional>
 #include "bsp/internal.h"
 #include "support/test.h"
 
@@ -123,6 +126,112 @@ test("collision factoring preserves predicate ties and counts shared hull roots"
                     == (solid ? bsp::contents_solid : bsp::contents_water));
             }
         expect(map.models[0].headnode[0] == 123);
+    }
+}
+
+test("collision plane promotion reuses another hull without a common immediate branch")
+{
+    auto map = solid_world();
+    format::dplane_t x{}, y{};
+    x.normal[0] = 1; x.type = 0;
+    y.normal[1] = 1; y.type = 1;
+    map.planes = {x,y};
+    format::dclipnode_t root{}, front{}, shared{};
+    root.planenum = 0; root.children[0] = 1; root.children[1] = bsp::contents_empty;
+    front.planenum = 1; front.children[0] = bsp::contents_water; front.children[1] = bsp::contents_empty;
+    shared.planenum = 0; shared.children[0] = bsp::contents_water; shared.children[1] = bsp::contents_empty;
+    map.clipnodes = {root,front,shared};
+    map.models[0].headnode[1] = 0; map.models[0].headnode[2] = 2;
+    bsp::trim_group g; g.model = 1;
+    g.targets = g.guards = {box({-2,-2,-2},{2,2,2})};
+    bsp::bsp_state state; state.map = &map; state.trim_groups = {g};
+    bsp::trim_legacy_collision(state);
+    expect(map.clipnodes.size() == 2u);
+    for (double px : {-1.,-1e-9,0.,1e-9,1.})
+        for (double py : {-1.,-1e-9,0.,1e-9,1.})
+        {
+            expect(contents(map,0,1,{px,py,0})
+                == (px >= 0 && py >= 0 ? bsp::contents_water : bsp::contents_empty));
+            expect(contents(map,0,2,{px,py,0})
+                == (px >= 0 ? bsp::contents_water : bsp::contents_empty));
+        }
+}
+
+test("collision promotion preserves the output depth limit through shared subtrees")
+{
+    auto map = solid_world();
+    int tail = bsp::contents_empty;
+    for (int i = 0; i < 1024; i++)
+    {
+        format::dplane_t p{}; p.normal[2] = 1; p.type = 2; p.dist = float(i);
+        map.planes.push_back(p);
+        format::dclipnode_t n{}; n.planenum = i;
+        n.children[0] = (short)tail; n.children[1] = bsp::contents_solid;
+        tail = (int)map.clipnodes.size(); map.clipnodes.push_back(n);
+    }
+    format::dplane_t x{}, y{};
+    x.normal[0] = 1; x.type = 0;
+    y.normal[1] = 1; y.type = 1;
+    map.planes.push_back(x); map.planes.push_back(y);
+    auto branch = [&](int plane, int front, int back) {
+        format::dclipnode_t n{}; n.planenum = plane;
+        n.children[0] = (short)front; n.children[1] = (short)back;
+        int id = (int)map.clipnodes.size(); map.clipnodes.push_back(n); return id;
+    };
+    int q = branch(1025, bsp::contents_water, bsp::contents_empty);
+    map.models[0].headnode[1] = branch(1024, q, tail);
+    map.models[0].headnode[2] = branch(1024, bsp::contents_water, tail);
+    map.models[0].headnode[3] = branch(1024, bsp::contents_empty, tail);
+    bsp::trim_group g; g.model = 1;
+    g.targets = g.guards = {box({-2,-2,-2},{2,2,2})};
+    bsp::bsp_state state; state.map = &map; state.trim_groups = {g};
+    bsp::trim_legacy_collision(state);
+    std::vector<int> heights(map.clipnodes.size());
+    std::function<int(int)> height = [&](int id) {
+        if (id < 0) return 0;
+        int &cached = heights[(size_t)id];
+        if (cached) return cached;
+        const auto &n = map.clipnodes[(size_t)id];
+        return cached = 1 + std::max(height(n.children[0]), height(n.children[1]));
+    };
+    for (int h = 1; h < 4; h++) expect(height(map.models[0].headnode[h]) <= 1025);
+    expect(contents(map,0,1,{1,1,2000}) == bsp::contents_water);
+    expect(contents(map,0,1,{1,-1,2000}) == bsp::contents_empty);
+}
+
+test("collision graph search preserves shared repeated predicates across all roots")
+{
+    for (std::uint32_t seed : {7u,31u,149u,65537u})
+    {
+        auto map = solid_world();
+        for (int axis = 0; axis < 3; axis++)
+        {
+            format::dplane_t p{}; p.normal[axis] = 1; p.type = axis;
+            map.planes.push_back(p);
+        }
+        auto random = [&]() { seed = seed * 1664525u + 1013904223u; return seed; };
+        std::vector<int> choices{bsp::contents_empty,bsp::contents_solid,bsp::contents_water};
+        for (int i = 0; i < 64; i++)
+        {
+            format::dclipnode_t n{}; n.planenum = (int)(random() % 3);
+            n.children[0] = (short)choices[random() % choices.size()];
+            n.children[1] = (short)choices[random() % choices.size()];
+            map.clipnodes.push_back(n); choices.push_back(i);
+        }
+        for (int h = 1; h < 4; h++) map.models[0].headnode[h] = 64 - h;
+        map.models[1].headnode[2] = 60; map.models[1].headnode[3] = 59;
+        const auto original = map;
+        bsp::trim_group g; g.model = 1;
+        g.targets = g.guards = {box({-2,-2,-2},{2,2,2})};
+        bsp::bsp_state state; state.map = &map; state.trim_groups = {g};
+        bsp::trim_legacy_collision(state);
+        expect(map.clipnodes.size() <= original.clipnodes.size());
+        for (int m = 0; m < 2; m++)
+            for (int h = 1; h < 4; h++)
+                for (double x : {-1.,0.,1.})
+                    for (double y : {-1.,0.,1.})
+                        for (double z : {-1.,0.,1.})
+                            expect(contents(map,m,h,{x,y,z}) == contents(original,m,h,{x,y,z}));
     }
 }
 

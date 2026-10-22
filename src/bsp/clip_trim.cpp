@@ -6,6 +6,7 @@
 #include <limits>
 #include <map>
 #include <tuple>
+#include <unordered_map>
 #include "../common/error.h"
 #include "../common/limits.h"
 #include "../common/log.h"
@@ -532,13 +533,14 @@ namespace bsp
                 nodes.resize(checkpoint);
             }
 
-            void factor_roots(std::vector<format::dmodel_t> &models)
+            void optimize_roots(std::vector<format::dmodel_t> &models, int levels)
             {
                 std::vector<int> roots;
                 for (const auto &m : models)
                     for (int h = 1; h < num_hulls; h++) roots.push_back(m.headnode[h]);
                 size_t work = 0, trials = 0;
-                constexpr size_t work_limit = 64000000, trial_limit = 256;
+                constexpr size_t work_limit = 64000000;
+                const size_t trial_limit = levels ? 65536 : 256;
                 auto reachable = [&](const std::vector<int> &heads) {
                     std::vector<int> result, pending = heads;
                     std::vector<bool> seen(nodes.size());
@@ -554,56 +556,172 @@ namespace bsp
                     return result;
                 };
                 auto live = reachable(roots);
+                const size_t initial_size = live.size();
                 while (work < work_limit && trials < trial_limit && nodes.size() < 1900000)
                 {
+                    std::vector<std::vector<int>> parents(nodes.size());
+                    std::vector<int> references(nodes.size());
+                    for (int root : roots) if (root >= 0) ++references[(size_t)root];
+                    for (int id : live)
+                        for (int child : {nodes[(size_t)id].front, nodes[(size_t)id].back})
+                            if (child >= 0)
+                            { ++references[(size_t)child]; parents[(size_t)child].push_back(id); }
                     bool improved = false;
                     for (int id : live)
                     {
                         if (work >= work_limit || trials >= trial_limit || nodes.size() >= 1900000) break;
                         const auto n = nodes[(size_t)id];
-                        if (n.front < 0 || n.back < 0) continue;
-                        const auto f = nodes[(size_t)n.front], b = nodes[(size_t)n.back];
-                        if (f.plane != b.plane || (f.front != b.front && f.back != b.back)) continue;
-                        ++trials;
-                        size_t checkpoint = nodes.size();
-                        int front = node(n.plane, f.front, b.front);
-                        int back = node(n.plane, f.back, b.back);
-                        int replacement = node(f.plane, front, back);
-                        std::vector<int> remap(nodes.size(), std::numeric_limits<int>::min());
-                        remap[(size_t)id] = replacement;
-                        bool stopped = false;
-                        std::function<int(int, int)> rewrite = [&](int old, int depth) -> int {
-                            if (old < 0 || stopped) return old;
-                            if (++work >= work_limit || depth > 1024 || nodes.size() >= 1900000)
-                            { stopped = true; return old; }
-                            // Only original roots and their original children
-                            // are traversed; freshly interned nodes are results.
-                            int &mapped = remap[(size_t)old];
-                            if (mapped != std::numeric_limits<int>::min()) return mapped;
-                            const auto child = nodes[(size_t)old];
-                            int cf = rewrite(child.front, depth + 1);
-                            int cb = rewrite(child.back, depth + 1);
-                            if (stopped) return old;
-                            return mapped = node(child.plane, cf, cb);
-                        };
-                        std::vector<int> candidate;
-                        for (int root : roots) candidate.push_back(rewrite(root, 0));
-                        auto next = stopped ? std::vector<int>{} : reachable(candidate);
-                        // Shannon factoring is exact for every predicate value,
-                        // including distance == 0. Measure all model/hull roots:
-                        // a shared old subtree may remain live elsewhere.
-                        if (!stopped && work < work_limit && next.size() < live.size())
+                        std::vector<int> splitters;
+                        if (levels)
                         {
-                            roots = std::move(candidate); live = std::move(next);
-                            improved = true; break;
+                            std::vector<std::pair<int, int>> pending;
+                            for (int child : {n.front, n.back})
+                                if (child >= 0) pending.emplace_back(child, 1);
+                            while (!pending.empty() && work < work_limit)
+                            {
+                                ++work;
+                                auto [child, level] = pending.back(); pending.pop_back();
+                                const auto &c = nodes[(size_t)child];
+                                if (c.plane != n.plane) splitters.push_back(c.plane);
+                                if (level < levels)
+                                    for (int next : {c.front, c.back})
+                                        if (next >= 0) pending.emplace_back(next, level + 1);
+                            }
+                            std::sort(splitters.begin(), splitters.end());
+                            splitters.erase(std::unique(splitters.begin(), splitters.end()), splitters.end());
                         }
-                        discard_nodes(checkpoint);
+                        else
+                        {
+                            if (n.front < 0 || n.back < 0) continue;
+                            const auto f = nodes[(size_t)n.front], b = nodes[(size_t)n.back];
+                            if (f.plane != b.plane || (f.front != b.front && f.back != b.back)) continue;
+                            splitters.push_back(f.plane);
+                        }
+                        for (int splitter : splitters)
+                        {
+                            if (work >= work_limit || trials >= trial_limit || nodes.size() >= 1900000) break;
+                            ++trials;
+                            size_t checkpoint = nodes.size();
+                            bool stopped = false;
+                            std::map<std::pair<int, bool>, int> cofactors;
+                            std::function<int(int, bool, int)> restrict = [&](int old, bool side, int depth) -> int {
+                                if (old < 0 || stopped) return old;
+                                if (++work >= work_limit || depth > 1024 || nodes.size() >= 1900000)
+                                { stopped = true; return old; }
+                                auto key = std::make_pair(old, side);
+                                auto found = cofactors.find(key);
+                                if (found != cofactors.end()) return found->second;
+                                const auto child = nodes[(size_t)old];
+                                int result;
+                                if (child.plane == splitter)
+                                    result = restrict(side ? child.front : child.back, side, depth + 1);
+                                else
+                                {
+                                    int cf = restrict(child.front, side, depth + 1);
+                                    int cb = restrict(child.back, side, depth + 1);
+                                    if (stopped) return old;
+                                    result = node(child.plane, cf, cb);
+                                }
+                                cofactors.emplace(key, result);
+                                return result;
+                            };
+                            int front = restrict(id, true, 0), back = restrict(id, false, 0);
+                            if (stopped) { discard_nodes(checkpoint); break; }
+                            int replacement = node(splitter, front, back);
+                            std::vector<bool> affected(checkpoint);
+                            std::vector<int> pending{id};
+                            while (!pending.empty())
+                            {
+                                if (++work >= work_limit) { stopped = true; break; }
+                                int old = pending.back(); pending.pop_back();
+                                if (affected[(size_t)old]) continue;
+                                affected[(size_t)old] = true;
+                                for (int parent : parents[(size_t)old]) pending.push_back(parent);
+                            }
+                            if (stopped) { discard_nodes(checkpoint); break; }
+                            std::vector<int> remap(nodes.size(), std::numeric_limits<int>::min());
+                            remap[(size_t)id] = replacement;
+                            std::function<int(int, int)> rewrite = [&](int old, int depth) -> int {
+                                if (old < 0 || stopped || !affected[(size_t)old]) return old;
+                                if (++work >= work_limit || depth > 1024 || nodes.size() >= 1900000)
+                                { stopped = true; return old; }
+                                // Only original roots and their original children
+                                // are traversed; freshly interned nodes are results.
+                                int &mapped = remap[(size_t)old];
+                                if (mapped != std::numeric_limits<int>::min()) return mapped;
+                                const auto child = nodes[(size_t)old];
+                                int cf = rewrite(child.front, depth + 1);
+                                int cb = rewrite(child.back, depth + 1);
+                                if (stopped) return old;
+                                return mapped = node(child.plane, cf, cb);
+                            };
+                            std::vector<int> candidate;
+                            for (int root : roots) candidate.push_back(rewrite(root, 0));
+                            size_t count = live.size();
+                            std::unordered_map<int, int> changed_references;
+                            std::function<void(int, bool, int)> reference = [&](int old, bool add, int depth) {
+                                if (old < 0 || stopped) return;
+                                if (++work >= work_limit || depth > 1024)
+                                { stopped = true; return; }
+                                int base = (size_t)old < references.size() ? references[(size_t)old] : 0;
+                                int &refs = changed_references.emplace(old, base).first->second;
+                                bool traverse = add ? refs++ == 0 : --refs == 0;
+                                if (!traverse) return;
+                                if (add) ++count; else --count;
+                                const auto child = nodes[(size_t)old];
+                                reference(child.front, add, depth + 1);
+                                reference(child.back, add, depth + 1);
+                            };
+                            // Add before removing: unchanged shared subtrees stay
+                            // live, so trial cost is proportional to changed paths.
+                            for (int root : candidate) reference(root, true, 0);
+                            for (int root : roots) reference(root, false, 0);
+                            // Shannon factoring is exact for every predicate value,
+                            // including distance == 0. Measure all model/hull roots:
+                            // a shared old subtree may remain live elsewhere.
+                            if (!stopped && work < work_limit && count < live.size())
+                            {
+                                // Promotion can lengthen a path which never
+                                // tested the promoted plane. Cached/shared
+                                // subtrees must still obey the output depth
+                                // limit when reached through a new ancestor.
+                                std::vector<int> heights(nodes.size(), -1);
+                                std::function<int(int, int)> height = [&](int current, int depth) -> int {
+                                    if (current < 0) return 0;
+                                    if (++work >= work_limit) { stopped = true; return 1026; }
+                                    if (depth > 1024) return 1026;
+                                    int &cached = heights[(size_t)current];
+                                    if (cached >= 0) return cached;
+                                    const auto child = nodes[(size_t)current];
+                                    int f = height(child.front, depth + 1);
+                                    if (stopped || f > 1025) return 1026;
+                                    int b = height(child.back, depth + 1);
+                                    return cached = std::min(1026, 1 + std::max(f, b));
+                                };
+                                bool safe_depth = true;
+                                for (int root : candidate)
+                                    if (height(root, 0) > 1025) { safe_depth = false; break; }
+                                if (stopped) { discard_nodes(checkpoint); break; }
+                                if (!safe_depth) { discard_nodes(checkpoint); continue; }
+                                auto next = reachable(candidate);
+                                if (work >= work_limit) { discard_nodes(checkpoint); break; }
+                                roots = std::move(candidate); live = std::move(next);
+                                improved = true; break;
+                            }
+                            discard_nodes(checkpoint);
+                        }
+                        if (improved) break;
                     }
                     if (!improved) break;
                 }
                 size_t i = 0;
                 for (auto &m : models)
                     for (int h = 1; h < num_hulls; h++) m.headnode[h] = roots[i++];
+                if (levels)
+                    logging::info("collision graph: %zu -> %zu nodes, %zu level-%d plane-order trials (%s)\n",
+                        initial_size, live.size(), trials, levels,
+                        work >= work_limit || trials >= trial_limit || nodes.size() >= 1900000
+                            ? "budget reached" : "complete");
             }
 
             int surface_union(const candidates &volumes, const math::bounding_box &bounds)
@@ -1024,7 +1142,11 @@ namespace bsp
 
             void finish(std::vector<format::dmodel_t> models)
             {
-                factor_roots(models);
+                optimize_roots(models, 0);
+                optimize_roots(models, 1);
+                optimize_roots(models, 2);
+                optimize_roots(models, 3);
+                optimize_roots(models, 4);
                 std::vector<format::dclipnode_t> output;
                 std::vector<int> remap(nodes.size(), std::numeric_limits<int>::min()), plane_remap(planes.size(), -1);
                 // Original plane indices are also referenced by draw nodes/faces.
