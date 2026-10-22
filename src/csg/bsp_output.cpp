@@ -783,11 +783,16 @@ namespace csg
         }
 
         data.planes = plane_file_bytes(result.planes);
-        // Optional .hsz v1 extension. Model order must match hull_surface_file,
+        // Optional .hsz extension (v2 adds exact-union volumes). Model order
+        // must match hull_surface_file,
         // including models with no collision in a particular hull.
         std::ostringstream groups;
         groups << std::setprecision(17);
         int model = 0, count = 0;
+        bool direct = false;
+        for (const auto &entity : result.entities)
+            for (const auto &brush : entity.brushes)
+                direct = direct || brush.exact_union;
         auto volume = [&](const math::bounding_box &bounds,
                           const std::vector<math::plane> &planes) {
             groups << planes.size();
@@ -814,16 +819,19 @@ namespace csg
                 continue;
             for (int h = 1; h < num_hulls; h++)
             {
-                int targets = 0, guards = 0;
+                int targets = 0, guards = 0, additions = 0;
                 for (const auto &brush : entity.brushes)
                 {
                     if (brush.contents != content::solid || brush.hulls[h].faces.empty()) continue;
                     guards++;
-                    if (!brush.trim_planes[h].empty()) targets++;
+                    if (!brush.trim_planes[h].empty())
+                    { targets++; if (brush.exact_union) additions++; }
                 }
                 if (!targets) continue;
                 count++;
-                groups << model << ' ' << h << ' ' << targets << ' ' << guards << '\n';
+                groups << model << ' ' << h << ' ' << targets << ' ' << guards;
+                if (direct) groups << ' ' << additions;
+                groups << '\n';
                 for (const auto &brush : entity.brushes)
                     if (!brush.trim_planes[h].empty()) legacy_volume(brush.hulls[h]);
                 for (const auto &brush : entity.brushes)
@@ -832,10 +840,14 @@ namespace csg
                     if (brush.trim_planes[h].empty()) legacy_volume(brush.hulls[h]);
                     else volume(brush.trim_bounds[h], brush.trim_planes[h]);
                 }
+                for (const auto &brush : entity.brushes)
+                    if (brush.exact_union && !brush.trim_planes[h].empty())
+                        volume(brush.trim_bounds[h], brush.trim_planes[h]);
             }
             model++;
         }
-        if (count) data.hull_sizes += "1 " + std::to_string(count) + "\n" + groups.str();
+        if (count) data.hull_sizes += std::string(direct ? "2 " : "1 ")
+            + std::to_string(count) + "\n" + groups.str();
         return data;
     }
 

@@ -339,7 +339,7 @@ hltools csg [options] <map>
 | Textures | `-nowadautodetect` | Keep unused WADs in the written worldspawn WAD list |
 | Textures | `-wadcfgfile <file>` | Read WAD paths from a configuration file |
 | Textures | `-wadconfig <name>` | Select a named block from the WAD configuration |
-| Geometry | `-cliptype <type>` | `smallest`, `normalized`, `simple`, `precise`, `legacy`, or `legacytrim`; default `simple`. A `func_detail` entity can override it with `zhlt_cliptype`; `func_group` and unknown values inherit the global setting |
+| Geometry | `-cliptype <type>` | `smallest`, `normalized`, `simple`, `precise`, `legacy`, `legacytrim`, or `exactunion`; default `simple`. A `func_detail` entity can override it with `zhlt_cliptype`; `func_group` and unknown values inherit the global setting |
 | Geometry | `-noclip` | Do not create clipping hulls |
 | Geometry | `-noskyclip` | Do not grow invisible clip copies from sky brushes |
 | Geometry | `-scale <n>` | Scale the whole map around the origin |
@@ -361,6 +361,18 @@ Use `-cliptype legacytrim` globally, or `zhlt_cliptype=legacytrim` on a
 `func_detail` for local control. The optional trim data travels in the `.hsz`
 intermediate, so CSG and BSP must both use this version of hltools. Extra clipping
 planes can increase clipnode usage; an exceeded budget fails the compile.
+
+`exactunion` constructs the union of selected brushes expanded by the collision
+hull box. BSP removes excess legacy collision and adds the complete exact union,
+so sloped brush seams follow that union even where legacy has low spots. Enable
+it with `-cliptype exactunion`, or set `zhlt_cliptype=exactunion` on a `func_detail`.
+Hulls 1–3 are computed independently. Within the selected bounds, existing solid
+is retained only where source brush expansions or captured exterior fill cover
+it. Unselected brushes keep their original expansion; active custom hull shapes
+and draw geometry are preserved. The exact solid union overrides liquid contents
+only inside the selected expansions. Both stages must support the version 2
+`.hsz` extension. Complex unions can increase compile time and clipnode usage;
+exceeding the geometry budget fails the compile.
 
 </details>
 

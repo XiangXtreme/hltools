@@ -389,6 +389,7 @@ namespace bsp
             free_detail_node_r(l);
             l->contents = contents_solid;
             l->planenum = -1;
+            l->exterior_filled = true;
         }
 
         // returns true if an occupied leaf is reached if fill is false, just
@@ -824,6 +825,7 @@ namespace bsp
         // now go back and fill things in
         g_fill.valid++;
         recursive_fill_outside(state, state.outside_node.portals->nodes[s], true);
+        capture_collision_fill(state, n);
 
         // remove faces and nodes from filled in leafs
         g_fill.c_falsenodes = 0;

@@ -87,6 +87,7 @@ namespace csg
         precise,
         legacy,
         legacytrim,
+        exactunion,
     };
 
     struct brush_build_options
@@ -121,6 +122,7 @@ namespace csg
         // inserting them there would change subsequent legacy plane merging.
         std::vector<math::plane> trim_planes[num_hulls];
         math::bounding_box trim_bounds[num_hulls];
+        bool exact_union = false;
         bool skipped = false;
     };
 

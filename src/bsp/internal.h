@@ -142,6 +142,7 @@ namespace bsp
         bool isdetail = false;        // is under a diskleaf
         bool isportalleaf = false;    // not detail and children are detail
         bool iscontentsdetail = false; // inside a detail brush
+        bool exterior_filled = false; // collision union preserves flood-filled void
         math::vec3v mins, maxs;       // bounding volume of portals
 
         // decision nodes

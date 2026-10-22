@@ -142,3 +142,103 @@ test("sidecar numbers reject malformed and overflowing trim data")
     expect_false(file.next_double(d)); expect_false(file.next_double(d)); expect_false(file.next_double(d));
     expect_false(file.has_more());
 }
+
+test("exactunion removes excess and fills gaps while preserving background contents")
+{
+    auto map = solid_world();
+    format::dplane_t p{}; p.normal[0] = 1; p.type = 0;
+    format::dclipnode_t n{};
+    n.planenum = 0; n.children[0] = bsp::contents_water; n.children[1] = bsp::contents_solid;
+    map.planes = {p}; map.clipnodes = {n}; map.models[0].headnode[1] = 0;
+    bsp::trim_group g;
+    g.targets = {box({-10,-10,-10},{0,10,10})};
+    auto a = box({-6,-10,-10},{4,10,10});
+    auto b = box({2,-10,-10},{8,10,10});
+    // Two oblique surfaces meet inside the overlap. The reference is their
+    // analytic union, independently evaluated throughout the test lattice.
+    const double k = 1 / std::sqrt(2.0);
+    a.planes.push_back({{k,0,k},2*k});
+    b.planes.push_back({{-k,0,k},-2*k});
+    g.guards = g.additions = {a,b};
+    bsp::bsp_state state; state.map = &map; state.trim_groups = {g};
+    bsp::trim_legacy_collision(state);
+    for (double x = -9.75; x < 10; x += 0.5)
+        for (double z = -9.9; z < 10; z += 0.5)
+        {
+            bool exact = (x >= -6 && x <= 4 && x+z <= 2)
+                || (x >= 2 && x <= 8 && z-x <= -2);
+            int expected = exact ? bsp::contents_solid
+                : (x < 0 ? bsp::contents_empty : bsp::contents_water);
+            expect(contents(map,0,1,{x,0,z}) == expected);
+        }
+    expect(contents(map,0,1,{-100,0,0}) == bsp::contents_solid);
+    expect(contents(map,0,1,{100,0,0}) == bsp::contents_water);
+    expect(contents(map,1,1,{3,0,0}) == bsp::contents_solid);
+    expect(contents(map,0,2,{3,0,0}) == bsp::contents_solid);
+    expect(map.models[0].headnode[0] == 123);
+}
+
+test("exactunion preserves unselected guards and honors noclip")
+{
+    auto map = solid_world();
+    bsp::trim_group g;
+    g.targets = {box({-10,-10,-10},{10,10,10})};
+    g.additions = {box({-5,-10,-10},{0,10,10})};
+    g.guards = g.additions;
+    g.guards.push_back(box({6,-10,-10},{10,10,10}));
+    bsp::bsp_state state; state.map = &map; state.trim_groups = {g};
+    bsp::trim_legacy_collision(state);
+    expect(contents(map,0,1,{8,0,0}) == bsp::contents_solid);
+    expect(contents(map,0,1,{3,0,0}) == bsp::contents_empty);
+    auto empty = solid_world();
+    empty.models[0].headnode[1] = bsp::contents_empty;
+    state.map = &empty; state.options.noclip = true;
+    bsp::trim_legacy_collision(state);
+    expect(empty.models[0].headnode[1] == bsp::contents_empty);
+    expect(empty.clipnodes.empty());
+}
+
+test("exactunion reclassifies false solid beyond source faces and retains captured fill")
+{
+    auto map = solid_world();
+    bsp::trim_group g;
+    // The original face BSP labels the entire region solid, including space
+    // outside the raw source brush. Removal must extend beyond that brush.
+    g.targets = {box({-4,-4,-4},{4,4,4})};
+    g.guards = g.additions = {box({-2,-2,-2},{2,2,2})};
+    g.exterior = {box({3,-5,-5},{5,5,5})};
+    bsp::bsp_state state; state.map = &map; state.trim_groups = {g};
+    bsp::trim_legacy_collision(state);
+    expect(contents(map,0,1,{-4.5,0,0}) == bsp::contents_empty);
+    expect(contents(map,0,1,{0,0,0}) == bsp::contents_solid);
+    expect(contents(map,0,1,{4.5,0,0}) == bsp::contents_solid);
+    expect(contents(map,0,1,{100,0,0}) == bsp::contents_solid);
+    // A protected brush is coverage, not authorization to fill an old gap.
+    map = solid_world(); map.models[0].headnode[1] = bsp::contents_empty;
+    g.guards.push_back(box({3,-4,-4},{4,4,4})); g.exterior.clear();
+    state.trim_groups = {g};
+    bsp::trim_legacy_collision(state);
+    expect(contents(map,0,1,{3.5,0,0}) == bsp::contents_empty);
+    expect(contents(map,0,1,{0,0,0}) == bsp::contents_solid);
+}
+
+test("exactunion captures exterior paths for the current model and hull before collapse")
+{
+    auto map = solid_world();
+    bsp::bsp_state state; state.map = &map; state.nummodels = 2; state.hullnum = 3;
+    bsp::trim_group g; g.model = 1; g.hull = 3;
+    g.targets = {box({-4,-4,-4},{4,4,4})};
+    g.guards = g.additions = {box({-2,-2,-2},{2,2,2})};
+    state.trim_groups = {g};
+    bsp::plane p{}; p.normal[0] = 1; p.type = 0; state.planes = {p};
+    bsp::node root, front, back;
+    root.planenum = 0; root.children[0] = &front; root.children[1] = &back;
+    front.exterior_filled = true;
+    bsp::capture_collision_fill(state, &root);
+    require(state.trim_groups[0].exterior.size() == 1);
+    bsp::trim_legacy_collision(state);
+    expect(contents(map,1,3,{4.5,0,0}) == bsp::contents_solid);
+    expect(contents(map,1,3,{-4.5,0,0}) == bsp::contents_empty);
+    expect(contents(map,0,3,{-4.5,0,0}) == bsp::contents_solid);
+    expect(contents(map,1,1,{-4.5,0,0}) == bsp::contents_solid);
+}

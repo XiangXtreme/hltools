@@ -145,7 +145,7 @@ namespace csg
                 return shifted;
             }
             if (options.clip == clip_type::legacy || options.clip == clip_type::legacytrim
-                || options.clip == clip_type::normalized)
+                || options.clip == clip_type::exactunion || options.clip == clip_type::normalized)
             {
                 for (int i = 0; i < 3; i++)
                 {
@@ -593,9 +593,11 @@ namespace csg
                 std::vector<brush_face> hull_faces = make_expanded_clip_planes(
                     brush, out.hulls[0], planes, mutable_planes, h, options);
                 out.hulls[h] = make_hull_faces(brush, mutable_planes, std::move(hull_faces), options.world_extent);
-                if (options.clip == clip_type::legacytrim && out.contents == content::solid
+                if ((options.clip == clip_type::legacytrim || options.clip == clip_type::exactunion)
+                    && out.contents == content::solid
                     && !out.hulls[h].faces.empty())
                 {
+                    out.exact_union = options.clip == clip_type::exactunion;
                     out.trim_planes[h] = exact_box_planes(out.hulls[0], planes,
                         options.hull_size[h][0], options.hull_size[h][1]);
                     out.trim_bounds[h].mins = out.hulls[0].bounds.mins + options.hull_size[h][0];

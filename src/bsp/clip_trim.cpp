@@ -12,15 +12,47 @@
 
 namespace bsp
 {
+    void capture_collision_fill(bsp_state &state, node *root)
+    {
+        trim_group *group = nullptr;
+        for (auto &g : state.trim_groups)
+            if (g.model == state.nummodels - 1 && g.hull == state.hullnum
+                && !g.additions.empty()) group = &g;
+        if (!group) return;
+        math::bounding_box bounds;
+        for (const auto &v : group->targets) bounds.add(v.bounds);
+        for (const auto &v : group->additions) bounds.add(v.bounds);
+        for (int a = 0; a < 3; a++) { bounds.mins[a] -= 1; bounds.maxs[a] += 1; }
+        std::vector<math::plane> path;
+        size_t total = 0;
+        std::function<void(node *)> visit = [&](node *n) {
+            if (n->exterior_filled)
+            {
+                total += path.size();
+                if (total > 4000000) err::fatal("exactunion: exterior fill budget exceeded");
+                group->exterior.push_back({bounds, path});
+                return;
+            }
+            if (n->planenum == -1) return;
+            const auto &p = state.planes[(size_t)n->planenum];
+            path.push_back({-p.normal, -p.dist});
+            visit(n->children[0]);
+            path.back() = {p.normal, p.dist};
+            visit(n->children[1]);
+            path.pop_back();
+        };
+        visit(root);
+    }
+
     void parse_clip_trim(bsp_state &state, token_file &file)
     {
         state.trim_groups.clear();
         int version, count;
         if (!file.has_more()) return; // ordinary legacy .hsz
         auto check = [](bool ok) {
-            if (!ok) err::fatal("invalid legacytrim hull-size extension");
+            if (!ok) err::fatal("invalid collision hull-size extension");
         };
-        check(file.next_int(version) && version == 1 && file.next_int(count)
+        check(file.next_int(version) && (version == 1 || version == 2) && file.next_int(count)
             && count > 0 && count <= 3 * limits::max_map_models);
         size_t total_planes = 0;
         auto read_volume = [&]() {
@@ -53,15 +85,18 @@ namespace bsp
         for (int i = 0; i < count; i++)
         {
             trim_group g;
-            int targets, guards;
+            int targets, guards, additions = 0;
             check(file.next_int(g.model) && g.model >= 0 && g.model < limits::max_map_models);
             check(file.next_int(g.hull) && g.hull > 0 && g.hull < num_hulls);
             check(file.next_int(targets) && targets > 0 && targets <= limits::max_map_brushes);
             check(file.next_int(guards) && guards >= targets && guards <= limits::max_map_brushes);
+            if (version == 2)
+                check(file.next_int(additions) && additions >= 0 && additions <= targets);
             for (const auto &old : state.trim_groups)
                 check(old.model != g.model || old.hull != g.hull);
             for (int j = 0; j < targets; j++) g.targets.push_back(read_volume());
             for (int j = 0; j < guards; j++) g.guards.push_back(read_volume());
+            for (int j = 0; j < additions; j++) g.additions.push_back(read_volume());
             state.trim_groups.push_back(std::move(g));
         }
         check(!file.has_more());
@@ -279,6 +314,153 @@ namespace bsp
                 return node(splitter, f, b);
             }
 
+            struct fragment
+            {
+                cell geometry;
+                std::vector<int> sides;
+            };
+
+            // Construct the union directly from convex fragments. Score real
+            // fragment cuts, so adjoining brushes need not inherit the old BSP
+            // split order. Region tests remove redundant supporting planes.
+            int build_union(const cell &region, std::vector<fragment> fragments, int depth)
+            {
+                if (++visits > 2000000 || depth > 768)
+                    err::fatal("exactunion: subdivision budget exceeded");
+                std::vector<fragment> active;
+                std::vector<int> splitters;
+                for (auto &frag : fragments)
+                {
+                    candidates remaining{std::move(frag.sides)};
+                    if (prune(remaining, region)) return contents_solid;
+                    if (remaining.empty()) continue;
+                    frag.sides = std::move(remaining[0]);
+                    splitters.insert(splitters.end(), frag.sides.begin(), frag.sides.end());
+                    active.push_back(std::move(frag));
+                }
+                if (active.empty()) return contents_empty;
+                std::sort(splitters.begin(), splitters.end());
+                splitters.erase(std::unique(splitters.begin(), splitters.end()), splitters.end());
+                int splitter = -1;
+                size_t best = std::numeric_limits<size_t>::max();
+                const size_t samples = std::min<size_t>(24, splitters.size());
+                for (size_t i = 0; i < samples; i++)
+                {
+                    int id = splitters[i * splitters.size() / samples];
+                    size_t front = 0, back = 0, cuts = 0;
+                    for (const auto &frag : active)
+                    {
+                        auto r = range(frag.geometry, geometric_planes[(size_t)id]);
+                        if (r.second > epsilon) front++;
+                        if (r.first < -epsilon) back++;
+                        if (r.first < -epsilon && r.second > epsilon) cuts++;
+                    }
+                    size_t score = 5 * cuts + (front > back ? front - back : back - front);
+                    if (score < best) { best = score; splitter = id; }
+                }
+                if (splitter < 0) err::fatal("exactunion: no valid splitter");
+                const auto p = geometric_planes[(size_t)splitter];
+                std::vector<fragment> front, back;
+                for (auto &frag : active)
+                {
+                    auto r = range(frag.geometry, p);
+                    if (r.first >= -epsilon) front.push_back(std::move(frag));
+                    else if (r.second <= epsilon) back.push_back(std::move(frag));
+                    else
+                    {
+                        front.push_back({half_cell(frag.geometry, p, false), frag.sides});
+                        back.push_back({half_cell(frag.geometry, p, true), std::move(frag.sides)});
+                    }
+                }
+                int f = build_union(half_cell(region, p, false), std::move(front), depth + 1);
+                int b = build_union(half_cell(region, p, true), std::move(back), depth + 1);
+                return node(splitter, f, b);
+            }
+
+            // Solid union takes precedence over water/empty; everywhere else
+            // retain the background tree, including its filled exterior.
+            int restrict_tree(int original, const cell &region, int depth)
+            {
+                if (++visits > 2000000 || depth > 768)
+                    err::fatal("exactunion: background subdivision budget exceeded");
+                if (original < 0) return original;
+                const auto n = nodes[(size_t)original];
+                const auto p = geometric_planes[(size_t)n.plane];
+                auto r = range(region, p);
+                if (r.first >= 0) return restrict_tree(n.front, region, depth + 1);
+                if (r.second <= 0) return restrict_tree(n.back, region, depth + 1);
+                int f = restrict_tree(n.front, half_cell(region, p, false), depth + 1);
+                int b = restrict_tree(n.back, half_cell(region, p, true), depth + 1);
+                return node(n.plane, f, b);
+            }
+
+            int without_solid(int id, std::map<int, int> &cache)
+            {
+                if (id < 0) return id == contents_solid ? contents_empty : id;
+                auto found = cache.find(id);
+                if (found != cache.end()) return found->second;
+                const auto n = nodes[(size_t)id];
+                int f = without_solid(n.front, cache), b = without_solid(n.back, cache);
+                return cache[id] = node(n.plane, f, b);
+            }
+
+            int overlay(int original, int addition, const cell &region, int depth)
+            {
+                if (++visits > 2000000 || depth > 768)
+                    err::fatal("exactunion: overlay budget exceeded");
+                if (addition == contents_solid || original == contents_solid) return contents_solid;
+                if (addition == contents_empty) return restrict_tree(original, region, depth + 1);
+                while (original >= 0)
+                {
+                    const auto old = nodes[(size_t)original];
+                    auto r = range(region, geometric_planes[(size_t)old.plane]);
+                    if (r.first >= 0) original = old.front;
+                    else if (r.second <= 0) original = old.back;
+                    else break;
+                    if (original == contents_solid) return contents_solid;
+                }
+                const auto n = nodes[(size_t)addition];
+                const auto p = geometric_planes[(size_t)n.plane];
+                auto r = range(region, p);
+                if (r.first >= 0) return overlay(original, n.front, region, depth + 1);
+                if (r.second <= 0) return overlay(original, n.back, region, depth + 1);
+                int f = overlay(original, n.front, half_cell(region, p, false), depth + 1);
+                int b = overlay(original, n.back, half_cell(region, p, true), depth + 1);
+                return node(n.plane, f, b);
+            }
+
+            int retain_covered_solid(int original, int coverage, const cell &region,
+                                     std::map<int, int> &empty_cache, int depth)
+            {
+                if (++visits > 2000000 || depth > 768)
+                    err::fatal("exactunion: coverage budget exceeded");
+                if (coverage == contents_solid) return restrict_tree(original, region, depth + 1);
+                if (coverage == contents_empty)
+                    return restrict_tree(without_solid(original, empty_cache), region, depth + 1);
+                if (original < 0 && original != contents_solid) return original;
+                const auto n = nodes[(size_t)coverage];
+                const auto p = geometric_planes[(size_t)n.plane];
+                auto r = range(region, p);
+                if (r.first >= 0) return retain_covered_solid(original, n.front, region, empty_cache, depth + 1);
+                if (r.second <= 0) return retain_covered_solid(original, n.back, region, empty_cache, depth + 1);
+                int f = retain_covered_solid(original, n.front, half_cell(region, p, false), empty_cache, depth + 1);
+                int b = retain_covered_solid(original, n.back, half_cell(region, p, true), empty_cache, depth + 1);
+                return node(n.plane, f, b);
+            }
+
+            int volume_union(const candidates &volumes, const math::bounding_box &bounds)
+            {
+                std::vector<fragment> fragments;
+                for (const auto &ids : volumes)
+                {
+                    cell geometry = box_cell(bounds);
+                    for (int id : ids)
+                        geometry = half_cell(geometry, geometric_planes[(size_t)id], true);
+                    if (geometry.size() >= 4) fragments.push_back({std::move(geometry), ids});
+                }
+                return build_union(box_cell(bounds), std::move(fragments), 0);
+            }
+
         public:
             explicit trimmer(format::map_data &m) : map(m)
             {
@@ -314,14 +496,36 @@ namespace bsp
                 prepare(g.targets, targets, false);
                 prepare(g.guards, guards, true);
                 for (const auto &v : g.targets) bounds.add(v.bounds);
+                for (const auto &v : g.additions) bounds.add(v.bounds);
                 for (int a = 0; a < 3; a++) { bounds.mins[a] -= 1; bounds.maxs[a] += 1; }
                 // Bounds themselves use exactly representable disk planes.
                 for (int a = 0; a < 3; a++)
                 { bounds.mins[a] = (float)bounds.mins[a]; bounds.maxs[a] = (float)bounds.maxs[a]; }
                 int original = models[(size_t)g.model].headnode[g.hull];
                 size_t before = removed;
-                int result = walk(original, box_cell(bounds), std::move(targets), std::move(guards), 0);
-                if (removed == before) return;
+                int result;
+                if (!g.additions.empty())
+                {
+                    // Reclassify solid from the complete source-volume union.
+                    // The face BSP may contain solid outside even its source
+                    // legacy volumes, so subtracting those volumes is insufficient.
+                    // Preserve non-solid contents and the actual exterior flood.
+                    candidates additions;
+                    prepare(g.additions, additions, true);
+                    prepare(g.exterior, guards, false);
+                    int coverage = volume_union(guards, bounds);
+                    std::map<int, int> cache;
+                    result = retain_covered_solid(original, coverage, box_cell(bounds), cache, 0);
+                    int addition = volume_union(additions, bounds);
+                    result = overlay(result, addition, box_cell(bounds), 0);
+                    logging::info("exactunion: model %d hull %d, %zu exact expansions\n",
+                        g.model, g.hull, g.additions.size());
+                }
+                else
+                {
+                    result = walk(original, box_cell(bounds), std::move(targets), std::move(guards), 0);
+                    if (removed == before) return;
+                }
                 // Outside the local box use the original tree, including world
                 // fill. A finite source-brush union must not open the void.
                 for (int a = 0; a < 3; a++)
@@ -334,7 +538,9 @@ namespace bsp
                         result = side ? node(id, original, result) : node(id, result, original);
                     }
                 models[(size_t)g.model].headnode[g.hull] = result;
-                logging::info("legacytrim: model %d hull %d, removed %zu solid cells\n", g.model, g.hull, removed - before);
+                if (g.additions.empty())
+                    logging::info("legacytrim: model %d hull %d, removed %zu solid cells\n",
+                        g.model, g.hull, removed - before);
             }
 
             void finish(std::vector<format::dmodel_t> models)
@@ -369,7 +575,7 @@ namespace bsp
                 };
                 for (auto &m : models)
                     for (int h = 1; h < num_hulls; h++) m.headnode[h] = emit(m.headnode[h], 0);
-                logging::info("legacytrim: %zu -> %zu clipnodes, %zu -> %zu planes\n",
+                logging::info("collision union: %zu -> %zu clipnodes, %zu -> %zu planes\n",
                     map.clipnodes.size(), output.size(), map.planes.size(), output_planes.size());
                 map.models = std::move(models);
                 map.clipnodes = std::move(output);
@@ -380,7 +586,7 @@ namespace bsp
 
     void trim_legacy_collision(bsp_state &state)
     {
-        if (state.trim_groups.empty()) return;
+        if (state.options.noclip || state.trim_groups.empty()) return;
         trimmer trim(*state.map);
         auto models = state.map->models;
         for (const auto &group : state.trim_groups) trim.group(group, models);
