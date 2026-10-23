@@ -31,6 +31,13 @@ suite("unit.cli.compile_parameters")
             cli::compiler_stage::csg, "-onlyents"));
         expect(!cli::option_applies_to(
             cli::compiler_stage::csg, "-onlyents", true));
+
+        const cli::option_spec *deepclip = cli::find_option_spec("-deepclip");
+        require(deepclip != nullptr);
+        expect(deepclip->arity == 0);
+        expect(deepclip->persist);
+        expect(cli::option_applies_to(cli::compiler_stage::bsp, "-deepclip", true));
+        expect(!cli::option_applies_to(cli::compiler_stage::csg, "-deepclip", true));
     }
 
     test("prepends entity defaults so explicit stage arguments win")
@@ -60,6 +67,44 @@ suite("unit.cli.compile_parameters")
         expect(args.int_value("-threads", 0) == 2);
         expect(args.int_value("-bounce", 0) == 9);
         expect(args.map_name() == "sample");
+    }
+
+    test("routes deep collision search through BSP entity parameters")
+    {
+        for (const char *enabled : {"0", "1"})
+        {
+            tools::compile_parameters parameters = {{"bsp_deepclip", enabled}};
+            std::vector<std::string> actual = {"hltools", "sample"};
+            std::vector<char *> argv;
+            for (auto &value : actual) argv.push_back(&value[0]);
+            tools::staged_arguments staged((int)actual.size(), argv.data(), parameters,
+                cli::compiler_stage::bsp);
+            cli::args args(staged.argc(), staged.argv.data());
+            expect(args.has("-deepclip") == (std::string(enabled) == "1"));
+            expect(args.map_name() == "sample");
+        }
+    }
+
+    test("routes and persists an explicit deep collision flag for combined compilation")
+    {
+        std::vector<std::string> actual = {"hltools", "-deepclip", "sample"};
+        std::vector<char *> argv;
+        for (auto &value : actual) argv.push_back(&value[0]);
+        const auto parameters = tools::canonical_compile_parameters((int)actual.size(), argv.data(), {});
+        require(parameters.size() == 1);
+        expect(parameters[0].first == "bsp_deepclip");
+        expect(parameters[0].second == "1");
+        std::vector<std::string> restored = {"hltools", "sample"};
+        argv.clear();
+        for (auto &value : restored) argv.push_back(&value[0]);
+        for (auto stage : {cli::compiler_stage::csg, cli::compiler_stage::bsp,
+                           cli::compiler_stage::vis, cli::compiler_stage::rad})
+        {
+            tools::staged_arguments staged((int)restored.size(), argv.data(), parameters, stage);
+            cli::args args(staged.argc(), staged.argv.data());
+            expect(args.has("-deepclip") == (stage == cli::compiler_stage::bsp));
+            expect(args.map_name() == "sample");
+        }
     }
 
     test("prefers embedded parameters and removes runtime metadata")

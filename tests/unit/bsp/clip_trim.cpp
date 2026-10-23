@@ -320,47 +320,58 @@ test("collision graph search preserves shared repeated predicates across all roo
 
 test("collision windows preserve every predicate assignment across shared model roots")
 {
-    auto map = solid_world();
-    for (int i = 0; i < 8; ++i)
+    size_t threshold_size = 0;
+    for (bool deep : {false, true})
     {
-        format::dplane_t p{}; p.type = 5;
-        p.normal[0] = float(0.03125 * (i+1));
-        p.normal[1] = float(0.015625 * i*i); p.normal[2] = 1;
-        map.planes.push_back(p);
-    }
-    std::uint32_t seed = 20261023u;
-    auto random = [&]() { seed = seed * 1664525u + 1013904223u; return seed; };
-    std::vector<int> choices{bsp::contents_empty,bsp::contents_solid,bsp::contents_water};
-    for (int i = 0; i < 160; ++i)
-    {
-        format::dclipnode_t n{}; n.planenum = int(random() % 8);
-        n.children[0] = (short)choices[random() % choices.size()];
-        n.children[1] = (short)choices[random() % choices.size()];
-        map.clipnodes.push_back(n); choices.push_back(i);
-    }
-    for (int m = 0; m < 2; ++m)
-        for (int h = 1; h < 4; ++h) map.models[m].headnode[h] = 159-m*3-h;
-    const auto original = map;
-    bsp::trim_group g; g.model = 1;
-    g.targets = g.guards = {box({-2,-2,-2},{2,2,2})};
-    bsp::bsp_state state; state.map = &map; state.trim_groups = {g};
-    bsp::trim_legacy_collision(state);
-    auto classify = [](const format::map_data &data, int m, int h, unsigned assignment) {
-        int id = data.models[m].headnode[h];
-        for (int depth = 0; id >= 0 && depth < 1024; ++depth)
+        auto map = solid_world();
+        for (int i = 0; i < 8; ++i)
         {
-            const auto &n = data.clipnodes[(size_t)id];
-            require(n.planenum >= 0); require(n.planenum < 8);
-            id = n.children[(assignment & (1u << n.planenum)) ? 0 : 1];
+            format::dplane_t p{}; p.type = 5;
+            p.normal[0] = float(0.03125 * (i+1));
+            p.normal[1] = float(0.015625 * i*i); p.normal[2] = 1;
+            map.planes.push_back(p);
         }
-        require(id < 0);
-        return id;
-    };
-    expect(map.clipnodes.size() <= 60u);
-    for (int m = 0; m < 2; ++m)
-        for (int h = 1; h < 4; ++h)
-            for (unsigned assignment = 0; assignment < 256; ++assignment)
-                expect(classify(map,m,h,assignment) == classify(original,m,h,assignment));
+        std::uint32_t seed = 20261023u;
+        auto random = [&]() { seed = seed * 1664525u + 1013904223u; return seed; };
+        std::vector<int> choices{bsp::contents_empty,bsp::contents_solid,bsp::contents_water};
+        for (int i = 0; i < 160; ++i)
+        {
+            format::dclipnode_t n{}; n.planenum = int(random() % 8);
+            n.children[0] = (short)choices[random() % choices.size()];
+            n.children[1] = (short)choices[random() % choices.size()];
+            map.clipnodes.push_back(n); choices.push_back(i);
+        }
+        for (int m = 0; m < 2; ++m)
+            for (int h = 1; h < 4; ++h) map.models[m].headnode[h] = 159-m*3-h;
+        const auto original = map;
+        bsp::trim_group g; g.model = 1;
+        g.targets = g.guards = {box({-2,-2,-2},{2,2,2})};
+        bsp::bsp_state state; state.map = &map; state.trim_groups = {g};
+        expect(!state.options.deepclip);
+        state.options.deepclip = deep;
+        bsp::trim_legacy_collision(state);
+        auto classify = [](const format::map_data &data, int m, int h, unsigned assignment) {
+            int id = data.models[m].headnode[h];
+            for (int depth = 0; id >= 0 && depth < 1024; ++depth)
+            {
+                const auto &n = data.clipnodes[(size_t)id];
+                require(n.planenum >= 0); require(n.planenum < 8);
+                id = n.children[(assignment & (1u << n.planenum)) ? 0 : 1];
+            }
+            require(id < 0);
+            return id;
+        };
+        if (deep)
+        {
+            expect(map.clipnodes.size() <= 60u);
+            expect(map.clipnodes.size() <= threshold_size);
+        }
+        else threshold_size = map.clipnodes.size();
+        for (int m = 0; m < 2; ++m)
+            for (int h = 1; h < 4; ++h)
+                for (unsigned assignment = 0; assignment < 256; ++assignment)
+                    expect(classify(map,m,h,assignment) == classify(original,m,h,assignment));
+    }
 }
 
 test("legacytrim classifies oblique boundaries throughout a convex cell")

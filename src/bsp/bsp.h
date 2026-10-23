@@ -23,6 +23,7 @@ namespace bsp
         bool noclip = false;
         bool noopt = false;
         bool noclipnodemerge = false;
+        bool deepclip = false;
         bool leakonly = false;
         // survey every hole instead of reporting only the first one found, and
         // put all of their paths in one pointfile

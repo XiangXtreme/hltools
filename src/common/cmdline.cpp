@@ -44,6 +44,7 @@ namespace cli
             {"-nobrink", bsp, 0, true, false},
             {"-noopt", bsp, 0, true, false},
             {"-noclipnodemerge", bsp, 0, true, false},
+            {"-deepclip", bsp, 0, true, false},
             {"-leakonly", bsp, 0, true, false},
             {"-allleaks", bsp, 0, true, false},
             {"-nonulltex", bsp, 0, true, false},

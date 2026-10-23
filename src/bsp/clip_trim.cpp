@@ -1374,45 +1374,51 @@ namespace bsp
                         g.model, g.hull, removed - before);
             }
 
-            void finish(std::vector<format::dmodel_t> models)
+            void finish(std::vector<format::dmodel_t> models, bool deep)
             {
+                logging::info("collision graph optimization: %s\n", deep ? "deep" : "threshold");
                 optimize_roots(models, 0);
                 optimize_roots(models, 1);
                 optimize_roots(models, 2);
                 optimize_roots(models, 3);
                 optimize_roots(models, 4);
-                // Neutral reorders expose new strict reductions; alternate
-                // both searches while retaining their completed smaller graphs.
-                // Bound the outer schedule as well as each individual pass.
-                for (std::uint32_t round = 0; round < 8; ++round)
+                if (!deep)
+                    for (std::uint32_t seed : {17u,193u,1021u}) optimize_roots(models, 1, seed);
+                else
                 {
-                    bool improved = false;
-                    for (std::uint32_t seed : {17u,193u,1021u})
-                        improved |= optimize_roots(models, 1, seed + round * 4099u);
-                    for (int level = 1; level <= 4; ++level)
-                        improved |= optimize_roots(models, level);
-                    if (!improved) break;
-                }
-                if (optimize_roots(models, 0, 0, 6))
-                    for (int level = 1; level <= 4; ++level) optimize_roots(models, level);
-                if (optimize_roots(models, 0, 0, 8, 4))
-                    for (int level = 1; level <= 4; ++level) optimize_roots(models, level);
-                // Window rewrites can open equal-size paths which were absent
-                // during the earlier exploration rounds.
-                for (std::uint32_t round = 0; round < 4; ++round)
-                {
-                    bool improved = false;
-                    for (std::uint32_t seed : {17u,193u,1021u})
-                        improved |= optimize_roots(models, 1, seed + (round + 8u) * 4099u);
-                    for (int level = 1; level <= 4; ++level)
-                        improved |= optimize_roots(models, level);
-                    if (!improved) break;
-                }
-                for (std::uint32_t seed : {317u, 65537u, 104729u})
-                {
-                    if (optimize_roots(models, 0, seed, 6, 4))
+                    // Neutral reorders expose new strict reductions; alternate
+                    // both searches while retaining their completed smaller graphs.
+                    // Bound the outer schedule as well as each individual pass.
+                    for (std::uint32_t round = 0; round < 8; ++round)
+                    {
+                        bool improved = false;
+                        for (std::uint32_t seed : {17u,193u,1021u})
+                            improved |= optimize_roots(models, 1, seed + round * 4099u);
                         for (int level = 1; level <= 4; ++level)
-                            optimize_roots(models, level);
+                            improved |= optimize_roots(models, level);
+                        if (!improved) break;
+                    }
+                    if (optimize_roots(models, 0, 0, 6))
+                        for (int level = 1; level <= 4; ++level) optimize_roots(models, level);
+                    if (optimize_roots(models, 0, 0, 8, 4))
+                        for (int level = 1; level <= 4; ++level) optimize_roots(models, level);
+                    // Window rewrites can open equal-size paths which were absent
+                    // during the earlier exploration rounds.
+                    for (std::uint32_t round = 0; round < 4; ++round)
+                    {
+                        bool improved = false;
+                        for (std::uint32_t seed : {17u,193u,1021u})
+                            improved |= optimize_roots(models, 1, seed + (round + 8u) * 4099u);
+                        for (int level = 1; level <= 4; ++level)
+                            improved |= optimize_roots(models, level);
+                        if (!improved) break;
+                    }
+                    for (std::uint32_t seed : {317u, 65537u, 104729u})
+                    {
+                        if (optimize_roots(models, 0, seed, 6, 4))
+                            for (int level = 1; level <= 4; ++level)
+                                optimize_roots(models, level);
+                    }
                 }
                 std::vector<format::dclipnode_t> output;
                 std::vector<int> remap(nodes.size(), std::numeric_limits<int>::min()), plane_remap(planes.size(), -1);
@@ -1459,6 +1465,6 @@ namespace bsp
         trimmer trim(*state.map);
         auto models = state.map->models;
         for (const auto &group : state.trim_groups) trim.group(group, models);
-        trim.finish(std::move(models));
+        trim.finish(std::move(models), state.options.deepclip);
     }
 }

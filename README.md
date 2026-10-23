@@ -385,10 +385,15 @@ Predicates with exactly identical engine dot products use their ordered distance
 thresholds to remove implied decisions, with the axial fast paths kept separate.
 Trial accounting follows changed ancestors and shared references; unfinished
 trials leave the completed graph intact.
-Up to eight deterministic rounds alternate three exploration passes with strict
-plane-order compaction. Exploration permits equal-size rewrites, with at most
-256 accepted steps per pass, and retains the smallest completed graph. A round
-with no reduction ends the search. This can expose reductions beyond a greedy
+By default, three deterministic exploration passes follow strict plane-order
+compaction. This threshold optimization balances compile time and node count.
+BSP's `-deepclip` option enables additional searches for collision unions
+produced by `legacytrim` or `exactunion`. It also applies in a combined compile.
+An `info_compile_parameters` entity can enable it with `bsp_deepclip=1`.
+With `-deepclip`, up to eight deterministic rounds alternate three exploration
+passes with strict plane-order compaction. Exploration permits equal-size
+rewrites, with at most 256 accepted steps per pass, and retains the smallest
+completed graph. A round with no reduction ends the search. This can expose reductions beyond a greedy
 plane-order plateau while preserving collision classification and output depth.
 A bounded pass rebuilds windows of up to six plane predicates from their
 complete truth tables, treating deeper subtrees as opaque terminals. A subsequent
@@ -425,6 +430,7 @@ hltools bsp [options] <map>
 | Tree | `-subdivide <n>` | Maximum face subdivision size; default `240` |
 | Tree | `-noopt` | Keep unused planes and texinfo entries |
 | Tree | `-noclipnodemerge` | Do not merge duplicate clipnodes |
+| Tree | `-deepclip` | Enable deeper collision union compaction; default uses threshold optimization |
 | Tree | `-notjunc` | Disable T junction fixing |
 | Tree | `-nobrink` | Disable brink fixing for convex clip hull edges |
 | Hulls | `-noclip` | Do not build clipping hulls |

@@ -32,6 +32,7 @@ namespace tools
         options.noclip = args.has("-noclip");
         options.noopt = args.has("-noopt");
         options.noclipnodemerge = args.has("-noclipnodemerge");
+        options.deepclip = args.has("-deepclip");
         options.leakonly = args.has("-leakonly");
         options.allleaks = args.has("-allleaks");
         options.nulltex = !args.has("-nonulltex");
@@ -61,6 +62,7 @@ namespace tools
                 "  -subdivide <n>        face subdivision size            (default: 240)\n"
                 "  -noopt                don't strip unused planes on write\n"
                 "  -noclipnodemerge      don't merge duplicate clipnodes\n"
+                "  -deepclip             spend more time compacting collision unions\n"
                 "  -notjunc              don't fix t-junctions\n"
                 "  -nobrink              don't fix brinks (stuck-on-edge clipnodes)\n"
                 "\n"
