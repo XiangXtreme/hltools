@@ -101,3 +101,50 @@ python -m unittest discover -s tests/tools -p test_concave_support_diagnose.py
 They reject non-supporting cuts, distinguish legacy from box support offsets,
 and exercise an L-shaped source whose ledge can be trimmed while its notch
 and all original source brush volumes remain intact.
+
+## Larger Entity Build
+
+`legacy_support_pipeline.py` applies the same global support rule to a selected
+solid `func_detail`, with map-relative probes and the existing legacy plane
+union repair backend for BSP classification errors. It overrides local
+cliptype settings in a compilation copy and proves each source brush remains
+inside its clipped collision group. It does not add local support propagation.
+
+```powershell
+python tools/legacy_support_pipeline.py `
+  --source D:/steam/steamapps/common/Half-Life/cstrike/maps/untitledx.map `
+  --entity 3 --compiler bin/hltools.exe `
+  --dumper bin/tools/brush_geometry_dump.exe `
+  --scripts C:/Users/Xiang/Downloads `
+  --output build/tmp/untitledx_surface_support_20261023_run1
+```
+
+For source SHA256
+`b9741eaeb656c312d13a7b46254276c11520c9d9927e54ff916f4453a838fe99`,
+360 terrain brushes have 13 shared supporting source planes. Only 29 brushes
+are clipped in each player hull. The original native legacy build stores
+11,934 clipnodes; the validated support build stores 13,680:
+
+| Hull | Reachable final nodes | Depth | Max sampled top trim |
+| --- | ---: | ---: | ---: |
+| Standing | 4,796 | 79 | 6.148775 |
+| Large | 4,115 | 73 | 18.625685 |
+| Crouched | 4,769 | 79 | 7.466508 |
+
+Raw collision compilation had leaf-classification errors. Direct half-space
+repair corrected the sampled errors. Per hull, independent terrain validation
+uses 250,000 points, 8,192 rays, exterior probes and a 66,049-ray top grid, with
+no remaining misses or errors above 0.01 units. Final collision is unioned
+with the room, with further sampled checks of that union and player starts.
+The final BSP retains the native legacy build's noncollision lumps byte for
+byte, including 46,713 light bytes and 142 VIS bytes.
+
+The effect is confined to the global envelope. Interior terrain seams whose
+roof planes are not shared supports are not repaired by this rule. This is a
+test artifact, not evidence that all 360-brush seams are smooth in-game.
+
+Run entity clipping checks with:
+
+```powershell
+python -m unittest discover -s tests/tools -p test_legacy_support_pipeline.py
+```
