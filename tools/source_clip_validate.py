@@ -294,10 +294,15 @@ def validate(args, config):
         pipeline.save_json(args.report_stem + ".json", result)
         np.savez_compressed(args.report_stem + "_probes.npz", **probes)
     if pipeline.sha256(config["source"]) != config["source_sha256"]:
-        raise ValueError("Original source BSP changed")
-    if pipeline.sha256(config["vmf"]) != config["vmf_sha256"]:
-        raise ValueError("Original VMF changed")
-    print("Original BSP and VMF hashes unchanged", flush=True)
+        raise ValueError("Original collision source changed")
+    if config.get("input_kind") == "brush_exterior_triangles":
+        if pipeline.sha256(root / "terrain_tris.npy") != config["triangle_sha256"]:
+            raise ValueError("Prepared triangles changed")
+        print("Original MAP and prepared triangle hashes unchanged", flush=True)
+    else:
+        if pipeline.sha256(config["vmf"]) != config["vmf_sha256"]:
+            raise ValueError("Original VMF changed")
+        print("Original BSP and VMF hashes unchanged", flush=True)
 
 
 def compare_archive(args, config):
