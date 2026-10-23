@@ -5,6 +5,12 @@ player can approach one slope from its lower end. The six room brushes and
 one triangular-prism slope are compiled in isolation; the original MAP and
 game installation remain unchanged.
 
+These measurements use the earlier seven-brush snapshot. The updated source
+adds a platform and a merged comparison brush; its decomposition-dependent
+legacy ledge is investigated separately in `BRUSH_SEAM_DIAGNOSIS.md` with
+`brush_seam_diagnose.py`. Single-slope thickness does not establish seam
+behavior.
+
 Run `tools/slope_contact_diagnose.py` with `--source`, `--compiler`, `--dumper`,
 `--scripts`, `--wad`, and a fresh `--output` directory. It compiles lit legacy
 and simple maps, extracts the unchanged slope top into two triangles, invokes
