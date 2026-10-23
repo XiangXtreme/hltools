@@ -215,3 +215,10 @@ attempting another whole-map candidate.
 ```powershell
 python -m unittest discover -s tests/tools -p test_surface_seam_audit.py
 ```
+
+The subsequent [cropped roof-lattice experiment](TERRAIN_LATTICE_EXPERIMENT.md)
+removes the first two measured steps with continuous legacy-shifted roof
+functions. It also identifies a real nearby source cliff in the third crop,
+which the roof-only construction rejects. This qualifies the seam audit:
+source continuity at a displaced collision step alone does not prove the
+absence of a nearby genuine source cliff. No whole-map replacement is built.
