@@ -127,3 +127,8 @@ python -m unittest discover -s tests/tools -p test_terrain_lattice_diagnose.py
 Focused tests cover convex ridges, concave valleys, mixed flat/valley surfaces,
 coplanar subdivision, source-cliff rejection, overlapping roof projections
 and independent measurement of real source steps.
+
+The subsequent [3D boundary experiment](BOUNDARY_LATTICE_EXPERIMENT.md) includes
+the rejected crop's real vertical faces. It retains that wall's shifted step
+while removing the first two artificial steps, and measures limitations when
+different crop sizes are compared.
