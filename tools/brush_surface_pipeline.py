@@ -27,6 +27,7 @@ from scipy.spatial import ConvexHull
 from legacy_clip_diagnose import convex_hit, margin, sha256, save_json
 from source_clip_pipeline import HullFile, SCRIPTS
 from source_clip_validate import structure, tree_first_hit
+from remove_map_group_volume import parse_map
 
 HALF = {1: np.array([16., 16., 36.]), 2: np.array([32., 32., 32.]),
         3: np.array([16., 16., 18.])}
@@ -153,7 +154,7 @@ def expanded(shapes, half, corners):
     return volumes
 
 
-def extract(path, entity):
+def extract(path, entity, require_single_top=True):
     brushes = [brush for brush in json.loads(path.read_text())["brushes"] if brush["entity"] == entity]
     if not brushes:
         raise ValueError("Selected entity has no built brushes")
@@ -166,14 +167,15 @@ def extract(path, entity):
         _, indices = np.unique(np.round(vertices, 9), axis=0, return_index=True)
         closed.append(vertices[np.sort(indices)])
         top = [face for face in brush["faces"] if face["normal"][2] > 1e-6]
-        if len(top) != 1:
+        if require_single_top and len(top) != 1:
             raise ValueError("Selected brushes must each have one top face")
-        polygon = np.array(top[0]["vertices"])
-        for i in range(1, len(polygon) - 1):
-            tri = polygon[[0, i, i + 1]]
-            if np.linalg.norm(np.cross(tri[1] - tri[0], tri[2] - tri[0])) < 1e-8:
-                raise ValueError("Degenerate top triangle")
-            triangles.append(tri)
+        for face in top:
+            polygon = np.array(face["vertices"])
+            for i in range(1, len(polygon) - 1):
+                tri = polygon[[0, i, i + 1]]
+                if np.linalg.norm(np.cross(tri[1] - tri[0], tri[2] - tri[0])) < 1e-8:
+                    raise ValueError("Degenerate top triangle")
+                triangles.append(tri)
     return closed, np.array(triangles)
 
 
@@ -416,12 +418,21 @@ def splice(background, terrain):
             raise ValueError("Visible geometry or lighting changed during collision splice")
     rng = np.random.default_rng(33524)
     points = rng.uniform(base.models[0]["mins"] - 128, base.models[0]["maxs"] + 128, (150000, 3))
+    entities = parse_map(base.lumps[0].rstrip(b"\0").decode("latin-1")).entities
+    starts = []
+    for entity in entities:
+        if entity.classname in ("info_player_start", "info_player_deathmatch", "info_player_coop"):
+            origin = np.array(entity.keyvalues.get("origin", "").split(), dtype=float)
+            if origin.shape != (3,) or not np.isfinite(origin).all():
+                raise ValueError("Invalid player start origin")
+            starts.append(origin)
     for hull in (1, 2, 3):
         expected = (base.contents(points, hull) == -2) | (terrain[hull].contents(points) == -2)
         if np.any((result.contents(points, hull) == -2) != expected):
             raise ValueError("Background union mismatch")
-        if np.any(result.contents(np.array([[0., 0., 96.]]), hull) != -1):
-            raise ValueError("Player start is blocked")
+        if starts and hull in (1, 3) and np.any(result.contents(np.array(starts), hull) != -1):
+            raise ValueError(f"Player start is blocked in hull {hull}")
+    checked["player_starts"] = [point.tolist() for point in starts]
     return bytes(data), checked
 
 
@@ -461,6 +472,7 @@ def main():
     for name in ("source", "compiler", "dumper", "scripts", "wad", "output"):
         parser.add_argument("--" + name, required=True, type=Path)
     parser.add_argument("--entity", type=int, required=True)
+    parser.add_argument("--mode", choices=("compare", "closed"), default="compare")
     args = parser.parse_args()
     for name in ("source", "compiler", "dumper", "scripts", "wad", "output"):
         setattr(args, name, getattr(args, name).resolve())
@@ -471,6 +483,7 @@ def main():
                 "runner_sha256": sha256(__file__), "wad_sha256": sha256(args.wad),
                 "scripts": {name: sha256(args.scripts / name) for name in SCRIPTS},
                 "tolerance": TOL, "numpy": np.__version__}
+    manifest["mode"] = args.mode
     if (root / "manifest.json").exists():
         if json.loads((root / "manifest.json").read_text()) != manifest:
             raise ValueError("Existing experiment has different inputs; choose a new output directory")
@@ -493,17 +506,20 @@ def main():
     if not (root / "geometry.json").exists() or not background.with_suffix(".bsp").exists():
         require_command([root / "compiler/brush_geometry_dump.exe", root / "source_snapshot.map",
                          root / "geometry.json", "--background", args.entity, background], root / "geometry.txt")
-    closed, triangles = extract(root / "geometry.json", args.entity)
+    closed, triangles = extract(root / "geometry.json", args.entity, args.mode == "compare")
     np.save(root / "top_triangles.npy", triangles)
     print(f"Input: {len(closed)} closed brushes, {len(triangles)} top triangles", flush=True)
     report = {"brushes": len(closed), "top_triangles": len(triangles), "hulls": {},
               "scope": "Top contact comparison; closed volumes and top-only shells can differ below or at sides.",
               "validation": "Independent seeds and unsnapped convex-volume oracle; sampling is not a whole-space proof."}
-    trees = {"closed": {}, "surface": {}}
+    variants = ("closed", "surface") if args.mode == "compare" else ("closed",)
+    trees = {name: {} for name in variants}
     for hull in (1, 2, 3):
         volumes = {}
         record = {"half_size": HALF[hull].tolist(), "variants": {}}
         for name, shapes in (("closed", closed), ("surface", triangles)):
+            if name not in variants:
+                continue
             volumes[name] = expanded(shapes, HALF[hull], exact.CORNERS)
             prefix = root / f"{name}_h{hull}"
             print(f"{name} hull {hull}", flush=True)
@@ -521,13 +537,14 @@ def main():
             trees[name][hull] = tree
             record["variants"][name] = result
             print(json.dumps(result), flush=True)
-        comparison, grid = surface_compare(trees["closed"][hull], trees["surface"][hull],
-                                           volumes["closed"], volumes["surface"], triangles, HALF[hull])
-        np.savez_compressed(root / f"surface_grid_h{hull}.npz", **grid)
-        record["comparison"] = comparison
+        if args.mode == "compare":
+            comparison, grid = surface_compare(trees["closed"][hull], trees["surface"][hull],
+                                               volumes["closed"], volumes["surface"], triangles, HALF[hull])
+            np.savez_compressed(root / f"surface_grid_h{hull}.npz", **grid)
+            record["comparison"] = comparison
+            print(json.dumps(comparison), flush=True)
         report["hulls"][str(hull)] = record
         save_json(root / "results.json", report)
-        print(json.dumps(comparison), flush=True)
     if not (root / "background_lit.bsp").exists():
         report["background_seconds"] = {}
         for stage in ("bsp", "vis", "rad"):
@@ -541,7 +558,7 @@ def main():
     if len(lit.lumps[8]) <= 1 or not any(lit.lumps[8]):
         raise ValueError("Background has no nonzero lighting samples")
     report["playable"] = {}
-    for name in ("closed", "surface"):
+    for name in variants:
         data, checked = splice(root / "background_lit.bsp", trees[name])
         path = root / f"brush_{name}_test.bsp"
         path.write_bytes(data)

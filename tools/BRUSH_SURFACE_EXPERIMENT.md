@@ -41,6 +41,11 @@ python tools/brush_surface_pipeline.py `
 python tools/brush_surface_report.py build/tmp/brush_surface_experiment
 ```
 
+Use `--mode closed` to build only the closed-brush hulls, without the additional
+top-triangle comparison. This mode accepts convex brushes with multiple upward
+faces and expands their complete vertex sets. The collision splice checks the
+actual player starts from the BSP entity lump for standing and crouched hulls.
+
 The helper's optional background mode preserves all visible brushes and makes
 only the selected func_detail noncolliding. In this experimental copy, light
 entities with a legacy `light` key and no `_light` key receive the equivalent

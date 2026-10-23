@@ -1,6 +1,7 @@
 """Geometry and graph checks for the isolated brush/surface experiment."""
 
 import itertools
+import json
 from pathlib import Path
 import struct
 import sys
@@ -15,6 +16,21 @@ from source_clip_pipeline import HullFile
 
 
 class BrushSurfaceTests(unittest.TestCase):
+    def test_closed_extraction_accepts_multiple_upward_faces(self):
+        points = [[0., 0., 0.], [1., 0., 0.], [0., 1., 0.]]
+        geometry = {"brushes": [{"entity": 3, "contents": -2, "faces": [
+            {"normal": [0., 0., 1.], "vertices": points},
+            {"normal": [0., 1., 1.], "vertices": [[0., 0., -1.], *points[:2]]}]}]}
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "geometry.json"
+            path.write_text(json.dumps(geometry))
+            with self.assertRaises(ValueError):
+                pipeline.extract(path, 3)
+            closed, triangles = pipeline.extract(path, 3, require_single_top=False)
+        self.assertEqual(len(closed), 1)
+        self.assertEqual(len(closed[0]), 4)
+        self.assertEqual(len(triangles), 2)
+
     def test_bounded_tree_is_empty_outside_repair_domain(self):
         tree = pipeline.Tree(np.empty((0, 5)), [], -2)
         tree.bound(np.array([-1., -2., -3.]), np.array([1., 2., 3.]))
@@ -56,7 +72,8 @@ class BrushSurfaceTests(unittest.TestCase):
 
     def test_splice_preserves_background_and_independent_hulls(self):
         lumps = [b""] * 15
-        lumps[0] = b'{\n"classname" "worldspawn"\n}\n\0'
+        lumps[0] = (b'{\n"classname" "worldspawn"\n}\n'
+                    b'{\n"classname" "info_player_start"\n"origin" "-5 -5 100"\n}\n\0')
         lumps[1] = struct.pack("<4fi", 1., 0., 0., 10., 0)
         lumps[4] = b"visibility-sentinel"
         lumps[8] = b"lighting-sentinel"
@@ -83,6 +100,7 @@ class BrushSurfaceTests(unittest.TestCase):
         np.testing.assert_array_equal(bsp.contents(points, 2), [-2, -1, -2, -1])
         np.testing.assert_array_equal(bsp.contents(points, 3), [-2, -1, -1, -1])
         self.assertEqual(checked["stored_nodes"], 6)
+        self.assertEqual(checked["player_starts"], [[-5., -5., 100.]])
 
 
 if __name__ == "__main__":
