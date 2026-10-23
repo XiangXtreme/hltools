@@ -426,6 +426,26 @@ test("legacytrim parser accepts ordinary hull sizes without enabling a trim")
     expect(state.trim_groups.empty());
 }
 
+test("collision sidecar versions preserve local scope unless complete coverage is explicit")
+{
+    const std::string volume = "6 -4 -4 -4 4 4 4 "
+        "1 0 0 4 -1 0 0 4 0 1 0 4 0 -1 0 4 0 0 1 4 0 0 -1 4 ";
+    for (int version : {1,2,3})
+    {
+        std::string data = std::to_string(version) + " 1 0 1 1 1 ";
+        if (version >= 2) data += "1 ";
+        if (version >= 3) data += "1 ";
+        data += volume + volume;
+        if (version >= 2) data += volume;
+        bsp::bsp_state state;
+        bsp::token_file file; file.set_text(data);
+        bsp::parse_clip_trim(state,file);
+        require(state.trim_groups.size() == 1);
+        expect(state.trim_groups[0].complete == (version == 3));
+        expect(state.trim_groups[0].additions.size() == (version >= 2 ? 1u : 0u));
+    }
+}
+
 test("legacytrim does not leave a collision skin on the old legacy surface")
 {
     auto map = solid_world();
@@ -614,6 +634,48 @@ test("exactunion prunes outside branches without changing distant contents")
         for (double py : {-1e12,150.,250.,1e12})
             for (double pz : {-1e12,-1000.,1000.,1e12})
                 expect(contents(map,0,1,{px,py,pz}) == contents(original,0,1,{px,py,pz}));
+}
+
+test("complete exactunion removes unbounded false solid while retaining liquid and other hulls")
+{
+    auto map = solid_world();
+    format::dplane_t p{}; p.normal[0] = 1; p.dist = 1000; p.type = 0;
+    format::dclipnode_t n{};
+    n.planenum = 0; n.children[0] = bsp::contents_water; n.children[1] = bsp::contents_solid;
+    map.planes = {p}; map.clipnodes = {n}; map.models[0].headnode[1] = 0;
+    bsp::trim_group g; g.complete = true;
+    g.targets = {box({-8,-8,-8},{8,8,8})};
+    g.guards = g.additions = {box({-4,-4,-4},{4,4,4})};
+    bsp::bsp_state state; state.map = &map; state.trim_groups = {g};
+    bsp::trim_legacy_collision(state);
+    expect(contents(map,0,1,{0,0,0}) == bsp::contents_solid);
+    for (double x : {-10000.,0.,999.})
+        for (double y : {-10000.,10000.})
+            for (double z : {-10000.,10000.})
+                expect(contents(map,0,1,{x,y,z}) == bsp::contents_empty);
+    expect(contents(map,0,1,{1001,0,0}) == bsp::contents_water);
+    expect(contents(map,0,1,{1001,-10000,10000}) == bsp::contents_water);
+    expect(contents(map,0,2,{0,10000,0}) == bsp::contents_solid);
+    expect(contents(map,1,1,{0,10000,0}) == bsp::contents_solid);
+    expect(map.models[0].headnode[0] == 123);
+    expect(map.clipnodes.size() < 24);
+    check_engine_hull_ranges(map);
+}
+
+test("complete exactunion preserves actual exterior fill beyond the selected bounds")
+{
+    auto map = solid_world();
+    bsp::trim_group g; g.complete = true;
+    g.targets = {box({-8,-8,-8},{8,8,8})};
+    g.guards = g.additions = {box({-4,-4,-4},{4,4,4})};
+    g.exterior = {box({6,-10,-10},{10,10,10})};
+    bsp::bsp_state state; state.map = &map; state.trim_groups = {g};
+    bsp::trim_legacy_collision(state);
+    expect(contents(map,0,1,{0,0,0}) == bsp::contents_solid);
+    expect(contents(map,0,1,{5,0,0}) == bsp::contents_empty);
+    expect(contents(map,0,1,{7,0,0}) == bsp::contents_solid);
+    expect(contents(map,0,1,{10000,0,0}) == bsp::contents_solid);
+    check_engine_hull_ranges(map);
 }
 
 test("exactunion keeps cavities and disconnected solids through shared boundary clipping")

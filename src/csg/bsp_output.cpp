@@ -783,8 +783,8 @@ namespace csg
         }
 
         data.planes = plane_file_bytes(result.planes);
-        // Optional .hsz extension (v2 adds exact-union volumes). Model order
-        // must match hull_surface_file,
+        // Optional .hsz extension (v3 marks complete exact-union coverage).
+        // Model order must match hull_surface_file,
         // including models with no collision in a particular hull.
         std::ostringstream groups;
         groups << std::setprecision(17);
@@ -830,7 +830,7 @@ namespace csg
                 if (!targets) continue;
                 count++;
                 groups << model << ' ' << h << ' ' << targets << ' ' << guards;
-                if (direct) groups << ' ' << additions;
+                if (direct) groups << ' ' << additions << ' ' << (additions == guards ? 1 : 0);
                 groups << '\n';
                 for (const auto &brush : entity.brushes)
                     if (!brush.trim_planes[h].empty()) legacy_volume(brush.hulls[h]);
@@ -846,7 +846,7 @@ namespace csg
             }
             model++;
         }
-        if (count) data.hull_sizes += std::string(direct ? "2 " : "1 ")
+        if (count) data.hull_sizes += std::string(direct ? "3 " : "1 ")
             + std::to_string(count) + "\n" + groups.str();
         return data;
     }

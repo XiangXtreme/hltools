@@ -15,6 +15,7 @@ namespace bsp
     struct trim_group
     {
         int model = 0, hull = 1;
+        bool complete = false; // every solid source expansion is an addition
         std::vector<trim_volume> targets, guards, additions;
         std::vector<trim_volume> exterior; // captured by BSP before leaf collapse
     };

@@ -136,6 +136,8 @@ suite("unit.csg.cliptype")
                 require(a.targets.size() == 1); require(a.guards.size() == 1);
                 expect(a.additions.size() == (std::string(mode) == "exactunion" ? 1 : 0));
                 expect(a.additions.size() == b.additions.size());
+                expect(a.complete == (std::string(mode) == "exactunion"));
+                expect(a.complete == b.complete);
                 expect(a.guards[0].bounds.mins == b.guards[0].bounds.mins);
                 require(a.guards[0].planes.size() == b.guards[0].planes.size());
                 for (size_t i = 0; i < a.guards[0].planes.size(); i++)
@@ -201,6 +203,37 @@ suite("unit.csg.cliptype")
             options.clip = csg::clip_type::legacy;
             built = csg::create_brush(map,brush,planes,{},nullptr,options);
             expect(built.trim_planes[1].empty());
+        }
+    }
+
+    test("complete collision coverage is recorded independently for each hull")
+    {
+        const auto scratch = test_support::scratch_directory("csg_complete_collision");
+        const std::string wad_path = (scratch / "textures.wad").string();
+        test_wad::write(wad_path,{"STONE"});
+        csg::csg_options options;
+        options.brush.clip = csg::clip_type::exactunion;
+        options.wad.map_path = wad_path;
+        auto result = csg::run_csg(make_map(wad_path,"func_detail","exactunion"), options);
+        require(result.entities.size() == 1);
+        require(result.entities[0].brushes.size() == 1);
+        auto unselected = result.entities[0].brushes[0];
+        unselected.exact_union = false;
+        for (auto &planes : unselected.trim_planes) planes.clear();
+        // This represents an ordinary or custom hull expansion. A missing
+        // hull contributes no collision and must not disable another hull's flag.
+        unselected.hulls[2].faces.clear();
+        result.entities[0].brushes.push_back(std::move(unselected));
+        auto data = csg::build_intermediate_data(result,options.brush);
+        bsp::bsp_state state;
+        bsp::token_file file; file.set_text(data.hull_sizes);
+        bsp::parse_hull_sizes(state,file);
+        require(state.trim_groups.size() == 3);
+        for (const auto &group : state.trim_groups)
+        {
+            expect(group.complete == (group.hull == 2));
+            expect(group.guards.size() == (group.hull == 2 ? 1u : 2u));
+            expect(group.additions.size() == 1);
         }
     }
 

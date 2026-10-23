@@ -370,9 +370,14 @@ Hulls 1–3 are computed independently. Within the selected bounds, existing sol
 is retained only where source brush expansions or captured exterior fill cover
 it. Unselected brushes keep their original expansion; active custom hull shapes
 and draw geometry are preserved. The exact solid union overrides liquid contents
-only inside the selected expansions. Both stages must support the version 2
-`.hsz` extension. Exposed union faces guide the split order, and retained solid
-regions are rebuilt together with the selected expansions to reduce redundant
+only inside the selected expansions. Version 3 of the `.hsz` extension records
+when all solid source expansions in a model/hull use `exactunion`. If there is
+no captured exterior fill, this complete selection also removes spurious legacy
+SOLID beyond the selected bounds while preserving liquid and empty contents.
+Partial selections and filled worlds retain their original outside collision.
+Both stages must support version 3; BSP still accepts versions 1 and 2 with
+their original local scope. Exposed union faces guide the split order, and
+retained solid regions are rebuilt together with the selected expansions to reduce redundant
 clipnodes. Contents classification keeps the complete volume constraints.
 Within a fixed search budget, BSP compares area and face-count split orders
 and keeps the complete tree with fewer reachable nodes. An unfinished trial

@@ -55,7 +55,7 @@ namespace bsp
         auto check = [](bool ok) {
             if (!ok) err::fatal("invalid collision hull-size extension");
         };
-        check(file.next_int(version) && (version == 1 || version == 2) && file.next_int(count)
+        check(file.next_int(version) && version >= 1 && version <= 3 && file.next_int(count)
             && count > 0 && count <= 3 * limits::max_map_models);
         size_t total_planes = 0;
         auto read_volume = [&]() {
@@ -93,8 +93,15 @@ namespace bsp
             check(file.next_int(g.hull) && g.hull > 0 && g.hull < num_hulls);
             check(file.next_int(targets) && targets > 0 && targets <= limits::max_map_brushes);
             check(file.next_int(guards) && guards >= targets && guards <= limits::max_map_brushes);
-            if (version == 2)
+            if (version >= 2)
                 check(file.next_int(additions) && additions >= 0 && additions <= targets);
+            if (version >= 3)
+            {
+                int complete;
+                check(file.next_int(complete) && (complete == 0 || complete == 1)
+                    && (!complete || additions == guards));
+                g.complete = complete != 0;
+            }
             for (const auto &old : state.trim_groups)
                 check(old.model != g.model || old.hull != g.hull);
             for (int j = 0; j < targets; j++) g.targets.push_back(read_volume());
@@ -1298,6 +1305,7 @@ namespace bsp
                 int original = models[(size_t)g.model].headnode[g.hull];
                 size_t before = removed;
                 int result;
+                bool finite = false;
                 if (!g.additions.empty())
                 {
                     // Reclassify solid from the complete source-volume union.
@@ -1316,6 +1324,7 @@ namespace bsp
                             return std::binary_search(selected.begin(), selected.end(), v);
                         }), guards.end());
                     prepare(g.exterior, guards, false);
+                    finite = g.complete && guards.empty();
                     int coverage = volume_union(guards, bounds);
                     std::map<int, int> cache;
                     result = retain_covered_solid(original, coverage, box_cell(bounds), cache, 0);
@@ -1336,16 +1345,25 @@ namespace bsp
                         result = overlay(without_solid(original, cache), solid, box_cell(bounds), 0);
                     }
                     else result = overlay(result, surface_union(additions, bounds), box_cell(bounds), 0);
-                    logging::info("exactunion: model %d hull %d, %zu exact expansions\n",
-                        g.model, g.hull, g.additions.size());
+                    logging::info("exactunion: model %d hull %d, %zu exact expansions%s\n",
+                        g.model, g.hull, g.additions.size(), finite ? ", finite union" : "");
                 }
                 else
                 {
                     result = walk(original, box_cell(bounds), std::move(targets), std::move(guards), 0);
                     if (removed == before) return;
                 }
-                // Outside the local box use the original tree, including world
-                // fill. A finite source-brush union must not open the void.
+                // A complete source union without exterior fill has no solid
+                // background. Keeping the old SOLID leaves would reintroduce
+                // unbounded face-BSP artifacts beyond the selected box.
+                int outside_root = original;
+                if (finite)
+                {
+                    std::map<int, int> cache;
+                    outside_root = without_solid(original, cache);
+                }
+                // Partial selections and filled worlds retain their original
+                // outside collision. Non-solid contents are always preserved.
                 for (int a = 0; a < 3; a++)
                     for (int side = 0; side < 2; side++)
                     {
@@ -1353,7 +1371,7 @@ namespace bsp
                         p.normal[a] = 1; p.type = a;
                         p.dist = (float)(side ? bounds.maxs[a] : bounds.mins[a]);
                         int id = add_plane(p);
-                        int outside = original;
+                        int outside = outside_root;
                         if (!g.additions.empty())
                         {
                             math::bounding_box region;
@@ -1364,7 +1382,7 @@ namespace bsp
                             }
                             if (side) region.mins[a] = p.dist;
                             else region.maxs[a] = p.dist;
-                            outside = restrict_outside(original, region, 0);
+                            outside = restrict_outside(outside_root, region, 0);
                         }
                         result = side ? node(id, outside, result) : node(id, result, outside);
                     }
