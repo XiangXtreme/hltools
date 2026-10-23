@@ -179,7 +179,8 @@ def outside_volume(volume, source):
     return float(sum(p["volume"] for p in outside_fragments(volume, source)))
 
 
-def compose_source(planes, bounds, source, max_pieces=20000, checkpoint=None, resume=None):
+def compose_source(planes, bounds, source, max_pieces=20000, checkpoint=None, resume=None,
+                   containment_source=None):
     """Cover source brushes by verified boundary terms, splitting only as needed."""
     pending = []
     for brush in source:
@@ -190,6 +191,9 @@ def compose_source(planes, bounds, source, max_pieces=20000, checkpoint=None, re
     maximum_split_error = 0.
     signature = hashlib.sha256(np.array(planes).tobytes() + np.array(bounds).tobytes()
                                + b"".join(b["planes"].tobytes() for b in source)).hexdigest()
+    allowed = source if containment_source is None else containment_source
+    if containment_source is not None:
+        signature = hashlib.sha256(signature.encode() + b"".join(b["planes"].tobytes() for b in allowed)).hexdigest()
     if resume:
         saved = json.loads(Path(resume).read_text())
         if saved["input_signature"] != signature:
@@ -211,11 +215,16 @@ def compose_source(planes, bounds, source, max_pieces=20000, checkpoint=None, re
         members = tuple(np.flatnonzero(offsets.max(0) <= 1e-7).tolist())
         if members in accepted:
             continue
+        # Fewer constraints mean a larger closure. A previously accepted
+        # subset covers this piece, including after the common plane offsets.
+        member_set = set(members)
+        if any(member_set.issuperset(term) for term in accepted):
+            continue
         if members not in cache:
             closure = intersect(bounds, planes[list(members)])
             if closure is None:
                 raise ValueError("Boundary closure lost its source piece")
-            fragments = outside_fragments(closure, source)
+            fragments = outside_fragments(closure, allowed)
             excess = sum(f["volume"] for f in fragments)
             witness = max(fragments, key=lambda f: f["volume"])["vertices"].mean(0) if fragments else None
             cache[members] = (excess, witness)
@@ -273,8 +282,9 @@ def compose_source(planes, bounds, source, max_pieces=20000, checkpoint=None, re
         raise ValueError(f"Adaptive composition loses source geometry: {missing} cubic units")
     excess = float(sum(accepted[tuple(t)] for t in kept))
     if excess > .001:
-        raise ValueError(f"Adaptive composition exceeds the source: {excess} cubic units")
+        raise ValueError(f"Adaptive composition exceeds its containment union: {excess} cubic units")
     return kept, {"visited_source_pieces": visited, "adaptive_splits": splits,
+                  "containment": "source" if containment_source is None else "supplied_envelope",
                   "maximum_split_volume_error": maximum_split_error,
                   "term_excess_volume_sum": excess,
                   "missing_source_volume_sum": missing, "source_coverage_checked": True}

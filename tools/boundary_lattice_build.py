@@ -28,6 +28,39 @@ def acceptable(record):
                 or rays["hit_miss_differences"] or rays["errors_over_0_01"])
 
 
+def source_checks(construction):
+    patch = construction["patches"][0]
+    keys = ["source_coverage_checked", "term_excess_volume_sum", "missing_source_volume_sum"]
+    if (not patch["source_coverage_checked"]
+            or any(not np.isfinite(patch[k]) or not 0 <= patch[k] <= .001 for k in keys[1:])):
+        raise ValueError("Source composition did not pass its volume checks")
+    normalization = construction.get("normalization")
+    if normalization is None:
+        if patch.get("containment", "source") != "source" or patch["unshifted_point_mismatches"]:
+            raise ValueError("Source-equivalent composition did not pass its checks")
+        keys += ["unshifted_point_mismatches"]
+    else:
+        bound, lift = normalization["maximum_upward_distance"], normalization["roof_lift"]
+        low, high = patch["source_contact_minimum_gain"], patch["source_contact_maximum_gain"]
+        if (normalization["mode"] != "bounded_vertical_normalization"
+                or patch.get("containment") != "supplied_envelope"
+                or not np.isfinite([bound, lift, low, high]).all()
+                or not 0 < lift <= bound <= .001
+                or patch["unshifted_missing_source_points"]
+                or patch["unshifted_outside_envelope_points"]
+                or patch["source_contact_grid"]["hit_miss_differences"]
+                or not -1e-5 <= low <= high <= bound + 1e-5):
+            raise ValueError("Bounded normalization did not pass its envelope checks")
+        keys += ["containment", "unshifted_missing_source_points", "unshifted_outside_envelope_points",
+                 "source_contact_grid", "source_contact_minimum_gain", "source_contact_maximum_gain"]
+    return {key: patch[key] for key in keys}
+
+
+def repair_builder(construction):
+    """Use compact fragment rebuilding only for the explicit normalized mode."""
+    return "fragments" if construction.get("normalization") else "planes"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for key in ("geometry", "reference", "output"):
@@ -42,9 +75,8 @@ def main():
             or len(construction["patches"]) != 1):
         raise ValueError("Select a completed adaptive whole-entity geometry build")
     patch = construction["patches"][0]
-    if (not patch["source_coverage_checked"] or patch["term_excess_volume_sum"] > .001
-            or patch["missing_source_volume_sum"] > .001 or patch["unshifted_point_mismatches"]):
-        raise ValueError("Source composition did not pass its checks")
+    checked_source = source_checks(construction)
+    local_builder = repair_builder(construction)
     for name, digest in construction["inputs"].items():
         if sha256(geometry_root / name) != digest or sha256(reference / name) != digest:
             raise ValueError(f"Geometry/reference input differs: {name}")
@@ -60,9 +92,8 @@ def main():
     report = {"geometry_root": str(geometry_root), "reference": str(reference),
               "source_sha256": source_hash, "runner_sha256": sha256(__file__),
               "scope": "Diagnostic BSP; explicit seam probes pass, wider surface continuity needs a separate audit.",
-              "source_checks": {key: patch[key] for key in (
-                  "source_coverage_checked", "term_excess_volume_sum",
-                  "missing_source_volume_sum", "unshifted_point_mismatches")}, "hulls": {}}
+              "source_checks": checked_source, "normalization": construction.get("normalization"),
+              "repair_builder": local_builder, "hulls": {}}
     source_geometry = json.loads((reference / "geometry.json").read_text())
     brushes = [b for b in source_geometry["brushes"] if b["entity"] == construction["entity"]]
     domain = np.array(patch["bounds"])
@@ -113,7 +144,7 @@ def main():
                        "before": validate(tree, target)})
         if not acceptable(record["before"]):
             record["repair"] = repair(tree, target, bb, tolerance=1e-4,
-                extra_rays=(origins, directions, length), local_builder="planes")
+                extra_rays=(origins, directions, length), local_builder=local_builder)
         tree.compact()
         record["nodes"] = len(tree.nodes)
         record["holdout"] = validate(tree, target)
@@ -140,7 +171,8 @@ def main():
             raise ValueError("Noncollision BSP data changed")
     if sha256(source_path) != source_hash:
         raise ValueError("Source MAP changed during compilation")
-    path = root / (source_path.stem + "_boundary_lattice.bsp")
+    suffix = "_boundary_normalized" if construction.get("normalization") else "_boundary_lattice"
+    path = root / (source_path.stem + suffix + ".bsp")
     path.write_bytes(data)
     report["output"] = {"path": str(path), "sha256": sha256(path), "structure": checked,
                          "light_bytes": len(final.lumps[8]), "vis_bytes": len(final.lumps[4])}

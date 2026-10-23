@@ -52,6 +52,8 @@ def main():
     parser.add_argument("--hull", type=int, choices=(1, 2, 3), default=1)
     parser.add_argument("--rows", type=float, nargs="+", required=True)
     parser.add_argument("--tree", type=Path, help="Optional compiled terrain NPZ, audited instead of target")
+    parser.add_argument("--candidate-geometry", type=Path,
+                        help="Replay boundary-plane crossings from a previous geometry, including removed planes")
     args = parser.parse_args()
     base, root = args.geometry.resolve(), args.output.resolve()
     summary = json.loads((base / "results.json").read_text())
@@ -64,11 +66,22 @@ def main():
     triangles, normals, source, _ = extract_exterior(geometry, summary["entity"])
     target_path = base / f"patch0_h{args.hull}.json"
     target = [{k: np.array(v) for k, v in t.items()} for t in json.loads(target_path.read_text())]
-    planes = np.array(record["planes"])
+    candidates = args.candidate_geometry.resolve() if args.candidate_geometry else base
+    previous = json.loads((candidates / "results.json").read_text())
+    if (previous["entity"] != summary["entity"] or previous["inputs"] != summary["inputs"]
+            or not previous.get("whole_entity")):
+        raise ValueError("Candidate geometry must use the same whole-entity source inputs")
+    candidate_record = json.loads((candidates / "construction.json").read_text())
+    planes = np.array(candidate_record["planes"])
     shifted = shift_legacy(planes, HALF[args.hull])
     tree = Tree.load(args.tree) if args.tree else None
     low = np.min([v["bounds"][0] for v in target], axis=0)
     high = np.max([v["bounds"][1] for v in target], axis=0)
+    scan_low, scan_high = low, high
+    if candidates != base:
+        old_target = json.loads((candidates / f"patch0_h{args.hull}.json").read_text())
+        scan_low = np.min([v["bounds"][0] for v in old_target], axis=0)
+        scan_high = np.max([v["bounds"][1] for v in old_target], axis=0)
     xy, source_xy, axes, plane_indices = [], [], [], []
     for axis in (0, 1):
         other = 1 - axis
@@ -77,7 +90,7 @@ def main():
                 if abs(p[2]) > 1e-8 or abs(p[axis]) < 1e-8:
                     continue
                 coordinate = (p[3] - p[other] * row) / p[axis]
-                if not low[axis] < coordinate < high[axis]:
+                if not scan_low[axis] < coordinate < scan_high[axis]:
                     continue
                 point = np.zeros(2)
                 point[axis], point[other] = coordinate, row
@@ -127,7 +140,9 @@ def main():
             "source_wall_confirmed": bool(confirmed[i]), "matching_wall_triangles": len(wall_triangles),
             "source_wall_local_height": wall_height(wall_triangles, row_axis, source_xy[i, row_axis])})
     report = {"scope": "Finite axis scans, not an exhaustive smoothness proof. Unconfirmed steps require inspection.",
-        "geometry": str(base), "target_sha256": sha256(target_path), "hull": args.hull, "rows": args.rows,
+        "geometry": str(base), "candidate_geometry": str(candidates),
+        "candidate_construction_sha256": sha256(candidates / "construction.json"),
+        "target_sha256": sha256(target_path), "hull": args.hull, "rows": args.rows,
         "tree": str(args.tree.resolve()) if tree else None, "tree_sha256": sha256(args.tree) if tree else None,
         "runner_sha256": sha256(__file__), "candidate_locations": len(xy),
         "detected_steps": int(detected.sum()), "source_wall_confirmed_steps": int((detected & confirmed).sum()),

@@ -99,6 +99,12 @@ Accepted closures must remain within the source. Final subtraction verifies
 that their union covers every original brush; both total excess and total
 missing-volume limits are 0.001 cubic units.
 
+An accepted term also covers every candidate with a superset of its
+constraints. Those pieces skip repeated closure subtraction. This Boolean
+absorption remains valid after the common plane offsets; final source coverage
+is still checked. Checkpoint input signatures include a supplied containment
+envelope whenever that mode is used.
+
 ```powershell
 python tools/boundary_lattice_diagnose.py `
   --build build/tmp/untitledx_surface_support_20261023_run1 --entity 3 `
@@ -230,6 +236,82 @@ boundary slivers, while bounding the influence of genuine walls. Simply
 deleting every vertical plane would destroy real cliffs. Increasing the
 source-volume tolerance or accepting target conformity would not resolve
 these failures.
+
+## Bounded Vertical Normalization
+
+`boundary_normalize.py` is a separate, opt-in response to exposed micro-slivers.
+It does not claim source equivalence. A roof candidate is raised by 0.00025
+units vertically without changing its normal. A vertical boundary plane can
+be omitted only if every matching exposed triangle has vertical thickness at
+most 0.00025 units. A substantial wall anywhere on the same plane prevents its
+removal. The source MAP and the reference BSP are unchanged.
+
+The allowed containment union extrudes each original convex brush upward by
+0.001 units. Its planes include the new vertical silhouette facets obtained
+from the brush's XY convex hull; moving only the existing faces would allow
+some sloped solids to grow horizontally. This construction also supports
+sloped lower faces. Convex subtraction must show coverage of the original
+source and containment within this explicit envelope, using the existing
+0.001-cubic-unit numerical budgets. The excess value in this mode refers to
+the envelope, not the original source. Independent points and top-contact
+checks are required as well. These numerical checks are not exact arithmetic
+proofs of all-space containment.
+
+```powershell
+python tools/boundary_normalize.py `
+  --build build/tmp/untitledx_surface_support_20261023_run1 --entity 3 `
+  --distance 0.001 --output build/tmp/untitledx_boundary_normalized_fresh
+```
+
+The builder recognizes the explicit normalization schema and checks its bound,
+containment mode, source coverage and independent envelope checks. It does not
+reuse the strict mode's `unshifted_point_mismatches` flag. Normalized diagnostic
+BSPs receive the suffix `_boundary_normalized`. Their local repair uses the
+fragment builder, which produced a shallower hull-2 tree in the completed run;
+strict source-equivalent builds retain the earlier plane repair path.
+
+### Completed normalized run
+
+The completed geometry is `build/tmp/untitledx_boundary_normalized_20261023_run2`.
+It removed 48 exposed micro-seam planes, retained the original XY silhouette,
+and used an explicit 0.001-unit upward containment envelope. Source coverage
+missing volume was zero; envelope excess was `0.000017451` cubic units;
+250,000 independent points had zero source misses and zero envelope escapes;
+the contact grid had no hit/miss differences and its gain was between
+0.00024999998 and 0.00025000001 units.
+
+Replaying all 1,933 crossings from the strict audit reduced persistent hull-1
+steps from 85 to 8. The two thin-wall examples at `(873.446598470, 500)` and
+`(841.801028849, 400)` changed from 17.357 and 8.946 units to approximately
+0.000076 and 0.000074 units. Seven remaining steps correspond to real walls;
+one unconfirmed point is adjacent to a real 448-unit-high wall and is retained
+for safety. This is a finite scan, not a proof of global continuity.
+
+The fragment-repaired diagnostic BSP is
+`build/tmp/untitledx_boundary_normalized_compiled_fragments_20261024/untitledx_boundary_normalized.bsp`.
+It has 3,067 stored clipnodes, with hull 1/2/3 reachable counts and maximum
+depths of 1,038/60, 996/66 and 1,033/66 respectively. All three hulls pass
+the existing 250,000-point, 8,192-ray, top-grid, exterior-space, index/cycle,
+budget, background-union, player-start, light and VIS checks. The complete
+build/repair step took 154.96 seconds after geometry construction. The map was
+not installed into the game and in-game movement remains untested.
+
+For a comparable seam audit, use `--candidate-geometry` to retain the previous
+plane crossings, including deleted planes. Otherwise a smaller candidate set
+could hide old failures. Use the same rows and hull as the original audit.
+
+```powershell
+python tools/boundary_lattice_audit.py `
+  --geometry build/tmp/untitledx_boundary_normalized_fresh `
+  --candidate-geometry build/tmp/untitledx_boundary_lattice_20261023_whole8 `
+  --hull 1 --rows -1000 -900 -800 -700 -600 -500 -400 -300 -200 -100 0 `
+                 100 200 300 400 500 600 700 800 900 1000 `
+  --output build/tmp/untitledx_boundary_normalized_audit_fresh
+```
+
+Removing these planes does not itself establish continuity after legacy
+offsetting. Genuine walls still require scrutiny for effects beyond their
+finite exposed faces, and float32 BSP planes still introduce boundary drift.
 
 ## Remaining Limits
 
