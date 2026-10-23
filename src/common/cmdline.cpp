@@ -22,6 +22,7 @@ namespace cli
             {"-threads", all, 1, true, false},
 
             {"-cliptype", csg, 1, true, false},
+            {"-clipmerge", csg, 0, true, false},
             {"-noclip", csg | bsp, 0, true, false},
             {"-nullifytrigger", csg, 0, true, false},
             {"-worldextent", csg, 1, true, false},

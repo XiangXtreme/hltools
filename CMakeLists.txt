@@ -257,6 +257,7 @@ add_library(hltools_csg STATIC
     src/csg/bsp_output.cpp
     src/csg/brush.cpp
     src/csg/brush_union.cpp
+    src/csg/clip_merge.cpp
     src/csg/csg.cpp
     src/csg/entity_output_fixups.cpp
     src/csg/hull_file.cpp

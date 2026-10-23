@@ -95,6 +95,7 @@ namespace csg
         bool noclip = false;
         bool only_entities = false;
         bool nullify_trigger = false;
+        bool merge_legacy_clip = false;
         vec_t world_extent = 65536;
         vec_t global_scale = -1;
         clip_type clip = clip_type::simple;
@@ -171,6 +172,11 @@ namespace csg
                                                       plane_store &planes,
                                                       int hull_num,
                                                       const brush_build_options &options = {});
+
+    brush_hull make_expanded_clip_hull(const map_brush &brush,
+                                      const brush_hull &hull0,
+                                      plane_store &planes, int hull_num,
+                                      const brush_build_options &options);
 
     void add_hull_shape(map_source &map, int entity_num, hull_shape_library &library);
 

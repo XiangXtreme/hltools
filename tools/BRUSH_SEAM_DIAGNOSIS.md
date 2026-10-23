@@ -1,5 +1,8 @@
 # Brush Decomposition and Legacy Collision
 
+The subsequent opt-in `-clipmerge` implementation and its measured scope are
+documented in `CLIP_MERGE_EXPERIMENT.md`.
+
 The updated `cliptype_sl.map` contains six room brushes, a ramp (brush 6),
 an adjoining platform (brush 7), and a merged copy (brush 8) on the other side
 of the room. Brush 8 translated by (-192, 0, 0) is exactly the same solid as

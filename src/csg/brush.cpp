@@ -1512,6 +1512,15 @@ namespace csg
         return faces;
     }
 
+    brush_hull make_expanded_clip_hull(const map_brush &brush,
+                                      const brush_hull &hull0,
+                                      plane_store &planes, int hull_num,
+                                      const brush_build_options &options)
+    {
+        auto faces = make_expanded_clip_planes(brush, hull0, planes, planes, hull_num, options);
+        return make_hull_faces(brush, planes, std::move(faces), options.world_extent);
+    }
+
     // registers one info_hullshape entity during the post parse walk a
     // zhlt_hull key can only reference shapes defined earlier in the map
     void add_hull_shape(map_source &map, int entity_num, hull_shape_library &library)

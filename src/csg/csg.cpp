@@ -7,6 +7,7 @@
 #include "../common/progress.h"
 #include "../common/string_util.h"
 #include "brush_union.h"
+#include "clip_merge.h"
 #include "hull_file.h"
 #include "studio_bsp.h"
 
@@ -133,6 +134,8 @@ namespace csg
             progress::add(1);
         }
         progress::end();
+        for (auto &entity : result.entities)
+            merge_legacy_clip_brushes(result.map, entity, planes, brush_options);
         result.planes = planes.planes();
 
         for (int i = 0; i < (int)result.map.entities.size(); i++)

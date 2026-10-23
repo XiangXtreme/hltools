@@ -107,6 +107,28 @@ suite("unit.cli.compile_parameters")
         }
     }
 
+    test("persists clip merging only for the CSG stage")
+    {
+        std::vector<std::string> actual = {"hltools", "-clipmerge", "sample"};
+        std::vector<char *> argv;
+        for (auto &value : actual) argv.push_back(&value[0]);
+        const auto parameters = tools::canonical_compile_parameters((int)actual.size(), argv.data(), {});
+        require(parameters.size() == 1);
+        expect(parameters[0].first == "csg_clipmerge");
+        expect(parameters[0].second == "1");
+        std::vector<std::string> restored = {"hltools", "sample"};
+        argv.clear();
+        for (auto &value : restored) argv.push_back(&value[0]);
+        for (auto stage : {cli::compiler_stage::csg, cli::compiler_stage::bsp,
+                           cli::compiler_stage::vis, cli::compiler_stage::rad})
+        {
+            tools::staged_arguments staged((int)restored.size(), argv.data(), parameters, stage);
+            cli::args args(staged.argc(), staged.argv.data());
+            expect(args.has("-clipmerge") == (stage == cli::compiler_stage::csg));
+            expect(args.map_name() == "sample");
+        }
+    }
+
     test("prefers embedded parameters and removes runtime metadata")
     {
         format::entity world;

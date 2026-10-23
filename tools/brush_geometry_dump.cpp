@@ -19,11 +19,14 @@ namespace
 
 int main(int argc, char **argv)
 {
-    const bool legacy_hulls = argc == 4 && std::string_view(argv[3]) == "--legacy-hulls";
+    const bool merge_hulls = argc == 5 && std::string_view(argv[3]) == "--legacy-hulls"
+        && std::string_view(argv[4]) == "--clipmerge";
+    const bool legacy_hulls = merge_hulls
+        || (argc == 4 && std::string_view(argv[3]) == "--legacy-hulls");
     if (argc != 3 && argc != 6 && !legacy_hulls)
     {
         std::cerr << "usage: brush_geometry_dump <input.map> <output.json>"
-                     " [--legacy-hulls | --background <entity-number> <output-base>]\n";
+                     " [--legacy-hulls [--clipmerge] | --background <entity-number> <output-base>]\n";
         return 1;
     }
     int selected_entity = -1;
@@ -41,6 +44,7 @@ int main(int argc, char **argv)
     threads::set_count(2);
     csg::csg_options options;
     options.brush.noclip = !legacy_hulls;
+    options.brush.merge_legacy_clip = merge_hulls;
     options.wad.map_path = argv[1];
     auto source = csg::load_map_file(argv[1]);
     if (legacy_hulls)

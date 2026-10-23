@@ -35,6 +35,7 @@ namespace tools
         options.brush.noclip = args.has("-noclip");
         options.brush.only_entities = args.has("-onlyents");
         options.brush.nullify_trigger = args.has("-nullifytrigger");
+        options.brush.merge_legacy_clip = args.has("-clipmerge");
         options.brush.world_extent = (vec_t)args.float_value("-worldextent", options.brush.world_extent);
         options.brush.global_scale = (vec_t)args.float_value("-scale", options.brush.global_scale);
         options.brush.clip = clip_type_arg(args);
@@ -72,6 +73,8 @@ namespace tools
         }
         logging::setting("clip type", csg::clip_type_name(options.brush.clip), "simple",
                          args.has("-cliptype"));
+        logging::setting("legacy clip merge", options.brush.merge_legacy_clip ? "on" : "off", "off",
+                         options.brush.merge_legacy_clip);
         return options;
     }
 
@@ -101,6 +104,7 @@ namespace tools
                 "                                                       (default: simple)\n"
                 "                        func_detail may override with zhlt_cliptype\n"
                 "  -noclip               don't create the clipping hulls\n"
+                "  -clipmerge            merge convex legacy collision brushes before expansion\n"
                 "  -noskyclip            don't clip the world with sky brushes\n"
                 "  -scale <n>            scale the whole map\n"
                 "  -worldextent <n>      world bounds per axis              (default: 65536)\n"
