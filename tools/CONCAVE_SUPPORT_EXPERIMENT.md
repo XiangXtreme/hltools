@@ -148,3 +148,70 @@ Run entity clipping checks with:
 ```powershell
 python -m unittest discover -s tests/tools -p test_legacy_support_pipeline.py
 ```
+
+## Complex Terrain Failure: untitledx
+
+The `untitledx_surface_support` build does **not** solve the complex terrain
+seams. Inspection of the final BSP confirmed actual top-height steps, beyond
+the lines introduced by BSP face subdivision. At the following XY locations,
+probe both sides along X by 0.0001 units:
+
+| X | Y | Source top difference | Hull 1 BSP top difference |
+| ---: | ---: | ---: | ---: |
+| 321.880950 | 250 | 0.000061 | 38.398917 |
+| -370.416862 | 750 | 0.000248 | 16.287502 |
+| -329.938729 | -250 | 0.000133 | 19.246266 |
+
+These BSP contacts agree with both the clipped target and the original legacy
+brush union to within 0.00003 units. Consequently the target itself retains
+the steps; correcting leaf labels or reducing node counts cannot remove them.
+The earlier target-conformity and structure checks remain useful but are not
+surface-continuity checks. This build should not be treated as a successful
+general terrain collision mode.
+
+The first two locations involve brushes 346/53 and 353/277 respectively,
+whose source roof faces share edges. Some source brushes have multiple upward
+faces and slightly tilted side faces. Treating every positive-Z normal as a
+terrain roof, or propagating one neighbor's plane over an entire brush, does
+not establish a valid local surface rule. An exploratory neighbor-plane test
+removed some steps but also introduced new candidate steps elsewhere. It was
+not compiled or installed as a replacement.
+
+Reproduce the failure against the saved experiment (the command deliberately
+returns exit code 1 because `--fail-on-step` is enabled):
+
+```powershell
+python tools/surface_seam_audit.py `
+  --geometry build/tmp/untitledx_surface_support_20261023_run1/geometry.json `
+  --bsp build/tmp/untitledx_surface_support_20261023_run1/untitledx_surface_support.bsp `
+  --target build/tmp/untitledx_surface_support_20261023_run1/target_h1.json `
+  --entity 3 --hull 1 `
+  --probe 321.88095 250 --probe -370.416862 750 --probe -329.938729 -250 `
+  --scan-y -850 -688 -500 -250 0 250 500 750 --fail-on-step `
+  --output build/tmp/untitledx_surface_seam_audit_20261023
+```
+
+Use a fresh output directory for another run. The audit records source,
+original expansion, optional target and final BSP top contacts at X offsets
+of 0.01, 0.001 and 0.0001 units. It rejects ray misses and steep continuous
+profiles whose differences shrink with the probe spacing. JSON witnesses,
+raw sample pairs and a contact-profile image are saved without changing BSPs.
+The three explicit probes reproduce persistent steps at all three spacings.
+
+Scanning eight rows of reachable vertical BSP planes produced 4,756 candidate
+locations and flagged 293. These are candidate locations, **not** a count of
+distinct artificial seams: multiple planes can describe nearly the same
+boundary, nearby real cliffs need review, and nonvertical boundaries or
+different rows may be missed. The diagnostic does not guarantee that the
+vertical ray origin is clear of unrelated scene geometry; inspect the saved
+Z range when auditing another map.
+
+Future geometry rules must be judged against original source containment,
+local contact continuity, intended legacy slope offsets, BSP target conformity
+and engine limits independently. A correct BSP representation of a fragmented
+target is insufficient. Start with the shared-edge witnesses above before
+attempting another whole-map candidate.
+
+```powershell
+python -m unittest discover -s tests/tools -p test_surface_seam_audit.py
+```
