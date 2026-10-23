@@ -401,6 +401,10 @@ accepted only when all model/hull roots together use fewer nodes and satisfy
 the depth limit; incomplete trials are discarded.
 After window synthesis, up to four further rounds alternate exploration with
 strict plane-order compaction. A round with no reduction ends this search too.
+Three deterministic six-predicate window searches then explore equal-size
+rewrites, retaining up to four realizations per subproblem and accepting at most
+256 rewrites per pass. Each pass keeps its smallest completed graph; a reduction
+triggers strict plane-order compaction before the next window search.
 Complex unions can increase compile time and clipnode usage;
 exceeding the geometry budget fails the compile.
 

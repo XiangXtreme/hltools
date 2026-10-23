@@ -945,10 +945,10 @@ namespace bsp
                 for (auto &m : models)
                     for (int h = 1; h < num_hulls; h++) m.headnode[h] = best_roots[i++];
                 if (windows)
-                    logging::info("collision graph: %zu -> %zu nodes, %zu width-%d window trials (%s)\n",
+                    logging::info("collision graph: %zu -> %zu nodes, %zu width-%d window trials (%s, %zu accepted rewrites)\n",
                         initial_size, best_size, trials, window_width,
-                        work >= work_limit || trials >= trial_limit || nodes.size() >= 1900000
-                            ? "budget reached" : "complete");
+                        work >= work_limit || trials >= trial_limit || steps >= step_limit || nodes.size() >= 1900000
+                            ? "budget reached" : "complete", steps);
                 else if (levels)
                     logging::info("collision graph: %zu -> %zu nodes, %zu level-%d %s trials (%s)\n",
                         initial_size, best_size, trials, levels,
@@ -1407,6 +1407,12 @@ namespace bsp
                     for (int level = 1; level <= 4; ++level)
                         improved |= optimize_roots(models, level);
                     if (!improved) break;
+                }
+                for (std::uint32_t seed : {317u, 65537u, 104729u})
+                {
+                    if (optimize_roots(models, 0, seed, 6, 4))
+                        for (int level = 1; level <= 4; ++level)
+                            optimize_roots(models, level);
                 }
                 std::vector<format::dclipnode_t> output;
                 std::vector<int> remap(nodes.size(), std::numeric_limits<int>::min()), plane_remap(planes.size(), -1);
