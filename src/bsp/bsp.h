@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "../common/types.h"
+#include "../common/direct_clip.h"
 #include "format/bsp/data.h"
 
 namespace bsp
@@ -47,6 +48,7 @@ namespace bsp
         std::string brushes[num_hulls];  // b0 through b3
         std::string hull_sizes;          // hsz
         std::vector<byte> planes;        // pln
+        std::vector<direct_clip::model> surface_clips; // pyexact direct trees
     };
 
     // same stage, but consumes in memory csg output instead of the sidecar

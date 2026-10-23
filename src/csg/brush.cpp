@@ -1580,6 +1580,7 @@ namespace csg
         out.chop_up = brush.chop_up;
         out.clipnode_detail_level = brush.clipnode_detail_level;
         out.coplanar_priority = brush.coplanar_priority;
+        out.pyexact = options.clip == clip_type::pyexact;
 
         if (out.contents == content::origin || out.contents == content::bounding_box)
         {

@@ -4,6 +4,7 @@
 
 #include "format/bsp/data.h"
 #include "csg.h"
+#include "../common/direct_clip.h"
 
 namespace csg
 {
@@ -27,6 +28,7 @@ namespace csg
         std::string brushes[num_hulls];  // b0 through b3 per hull detail brush text
         std::string hull_sizes;          // hsz text
         std::vector<byte> planes;        // pln binary plane records
+        std::vector<direct_clip::model> surface_clips; // pyexact direct trees
     };
 
     intermediate_data build_intermediate_data(const csg_result &result,

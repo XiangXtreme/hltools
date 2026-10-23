@@ -151,10 +151,28 @@ namespace bsp
             else
             {
                 // the clipping hulls are simpler
+                const bool direct_surface_clip = modnum >= 0
+                    && modnum < (int)state.surface_clips.size()
+                    && state.surface_clips[(size_t)modnum].valid;
                 for (state.hullnum = 1; state.hullnum < num_hulls; state.hullnum++)
                 {
                     surfs = read_surfs(state, state.hullnum);
                     detailbrushes = read_brushes(state, state.hullnum);
+                    if (direct_surface_clip)
+                    {
+                        // The direct Python tree replaces this model's
+                        // generated clip hulls. Still consume the streams so
+                        // the next model starts at the correct sidecar block.
+                        delete surfs;
+                        while (detailbrushes)
+                        {
+                            brush *next = detailbrushes->next;
+                            free_brush(detailbrushes);
+                            detailbrushes = next;
+                        }
+                        model->headnode[state.hullnum] = contents_empty;
+                        continue;
+                    }
                     grow_model_bounds(state, model, surfs, state.hullnum);
                     nodes = solid_bsp(state, surfs, detailbrushes, modnum == 0);
                     if (modnum == 0 && !state.options.nofill)
@@ -292,6 +310,7 @@ namespace bsp
         }
         std::remove((base_path + ".hsz").c_str());
         std::remove((base_path + ".pln").c_str());
+        std::remove((base_path + ".scl").c_str());
     }
 
     void run_bsp(format::map_data &map, const std::string &base_path, const bsp_options &options,

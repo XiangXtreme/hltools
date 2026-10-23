@@ -9,6 +9,7 @@
 #include "../common/filesystem.h"
 #include "../common/log.h"
 #include "../common/string_util.h"
+#include "../common/direct_clip_io.h"
 
 namespace bsp
 {
@@ -83,6 +84,8 @@ namespace bsp
             if (!state.brushfiles[i].open(name))
                 err::fatal("can't open %s", name.c_str());
         }
+        if (!direct_clip::read_file(state.base_path + ".scl", state.surface_clips))
+            state.surface_clips.clear();
     }
 
     void parse_hull_sizes(bsp_state &state, token_file &f)
@@ -159,6 +162,7 @@ namespace bsp
         sizes.set_text(std::move(input.hull_sizes));
         parse_hull_sizes(state, sizes);
         set_planes(state, input.planes.data(), input.planes.size());
+        state.surface_clips = std::move(input.surface_clips);
     }
 
     namespace

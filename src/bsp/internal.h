@@ -241,6 +241,10 @@ namespace bsp
         // entity lookup for warnings (parsed once by the driver)
         std::vector<format::entity> entities;
 
+        // Optional Python-style exterior-surface collision trees, indexed in
+        // the same model order as the p0-p3 intermediate streams.
+        std::vector<direct_clip::model> surface_clips;
+
         // leaf content conflicts collected for one consolidated report
         std::vector<leaf_content_conflict> leaf_content_conflicts;
 

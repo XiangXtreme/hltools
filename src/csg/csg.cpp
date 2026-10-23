@@ -59,6 +59,8 @@ namespace csg
             out = clip_type::legacytrim;
         else if (str::iequals(value, "exactunion"))
             out = clip_type::exactunion;
+        else if (str::iequals(value, "pyexact"))
+            out = clip_type::pyexact;
         else
             return false;
         return true;
@@ -82,6 +84,8 @@ namespace csg
             return "legacytrim";
         case clip_type::exactunion:
             return "exactunion";
+        case clip_type::pyexact:
+            return "pyexact";
         case clip_type::inherit:
             return "inherit";
         default:

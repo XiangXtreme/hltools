@@ -165,8 +165,11 @@ add_library(hltools_common STATIC
     src/common/filesystem.cpp
     src/common/threads.cpp
     src/common/cmdline.cpp
+    src/common/direct_clip_io.cpp
     src/common/progress.cpp
 )
+set_source_files_properties(src/common/direct_clip_io.cpp PROPERTIES
+    COMPILE_DEFINITIONS HLTOOLS_DOUBLE_PRECISION)
 target_include_directories(hltools_common PUBLIC src)
 
 # math: templated vector, plane, winding, bounding box (float and double)
@@ -264,6 +267,7 @@ add_library(hltools_csg STATIC
     src/csg/map_parser.cpp
     src/csg/map_post.cpp
     src/csg/studio_bsp.cpp
+    src/csg/surface_clip.cpp
     src/csg/textures.cpp
     src/csg/wad_path.cpp
 )

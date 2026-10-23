@@ -213,6 +213,7 @@ namespace tools
         }
         input.hull_sizes = std::move(inter.hull_sizes);
         input.planes = std::move(inter.planes);
+        input.surface_clips = std::move(inter.surface_clips);
         bsp::run_bsp(map, base, bsp_options, std::move(input));
 
         if (logging::had_leak() || logging::had_error())

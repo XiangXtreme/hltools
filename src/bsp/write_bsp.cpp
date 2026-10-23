@@ -884,6 +884,79 @@ namespace bsp
         state.map->leafs[0].contents = contents_solid;
     }
 
+    namespace
+    {
+        void install_surface_clips(bsp_state &state)
+        {
+            if (state.surface_clips.empty()) return;
+            format::map_data &map = *state.map;
+            for (size_t model_index = 0; model_index < state.surface_clips.size(); model_index++)
+            {
+                const direct_clip::model &direct = state.surface_clips[model_index];
+                if (!direct.valid || model_index >= map.models.size()) continue;
+                format::dmodel_t &model = map.models[model_index];
+
+                auto append_tree = [&](const direct_clip::tree &tree) -> int {
+                    if (!tree.valid || tree.head < 0) return tree.head;
+                    const int plane_base = (int)state.planes.size();
+                    if (state.planes.size() > (size_t)limits::max_map_planes
+                        || tree.planes.size() > ((size_t)limits::max_map_planes - state.planes.size()) / 2)
+                        err::fatal("pyexact: collision exceeds %d planes", limits::max_map_planes);
+                    for (const auto &source : tree.planes)
+                    {
+                        plane p;
+                        p.normal = source.normal;
+                        p.dist = source.dist;
+                        p.type = (int)math::type_for_normal(p.normal);
+                        state.planes.push_back(p);
+                        plane opposite = p;
+                        opposite.normal = -opposite.normal;
+                        opposite.dist = -opposite.dist;
+                        opposite.type = (int)math::type_for_normal(opposite.normal);
+                        state.planes.push_back(opposite);
+                    }
+
+                    const int node_base = (int)map.clipnodes.size();
+                    if (map.clipnodes.size() > (size_t)limits::max_map_clipnodes
+                        || tree.nodes.size() > (size_t)limits::max_map_clipnodes - map.clipnodes.size())
+                        err::fatal("pyexact: collision exceeds %d clipnodes", limits::max_map_clipnodes);
+                    map.clipnodes.resize(map.clipnodes.size() + tree.nodes.size());
+                    for (size_t i = 0; i < tree.nodes.size(); i++)
+                    {
+                        const direct_clip::node &source = tree.nodes[i];
+                        format::dclipnode_t &out = map.clipnodes[(size_t)node_base + i];
+                        out.planenum = plane_base + source.plane * 2;
+                        if (out.planenum < 0 || out.planenum >= limits::max_map_planes)
+                            err::fatal("pyexact: invalid direct plane index");
+                        const int children[2] = {source.front, source.back};
+                        for (int side = 0; side < 2; side++)
+                        {
+                            int child = children[side];
+                            if (child >= 0) child += node_base;
+                            if (child >= limits::max_map_clipnodes)
+                                err::fatal("pyexact: collision exceeds %d clipnodes", limits::max_map_clipnodes);
+                            out.children[side] = (short)child;
+                        }
+                    }
+                    return node_base + tree.head;
+                };
+
+                int standing = append_tree(direct.hulls[1]);
+                int ducking = append_tree(direct.hulls[3]);
+                if (standing < 0 || ducking < 0)
+                    err::fatal("pyexact: model %zu has an invalid collision tree", model_index);
+                model.headnode[1] = standing;
+                model.headnode[2] = standing;
+                model.headnode[3] = ducking;
+                for (int axis = 0; axis < 3; axis++)
+                {
+                    model.mins[axis] = std::min(model.mins[axis], (float)std::min(direct.hulls[1].mins[axis], direct.hulls[3].mins[axis]));
+                    model.maxs[axis] = std::max(model.maxs[axis], (float)std::max(direct.hulls[1].maxs[axis], direct.hulls[3].maxs[axis]));
+                }
+            }
+        }
+    }
+
     void finish_bsp_file(bsp_state &state)
     {
         format::map_data &map = *state.map;
@@ -921,6 +994,11 @@ namespace bsp
         {
             fix_all_brinks(state);
         }
+
+        // Install pyexact trees after normal writer optimization and brink
+        // preparation. Their planes and nodes are intentionally kept verbatim
+        // so the Python fragment BSP remains the collision representation.
+        install_surface_clips(state);
 
         optimize_face_order(state);
         write_extent_file(state, state.base_path + ".ext");

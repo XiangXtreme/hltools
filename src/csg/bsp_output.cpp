@@ -12,6 +12,8 @@
 #include "../common/string_util.h"
 #include "format/bsp/entity_lump.h"
 #include "entity_output_fixups.h"
+#include "surface_clip.h"
+#include "../common/direct_clip_io.h"
 
 namespace csg
 {
@@ -783,6 +785,13 @@ namespace csg
         }
 
         data.planes = plane_file_bytes(result.planes);
+        bool wants_surface_clips = options.clip == clip_type::pyexact;
+        if (!wants_surface_clips)
+            for (const auto &entity : result.entities)
+                for (const auto &brush : entity.brushes)
+                    wants_surface_clips = wants_surface_clips || brush.pyexact;
+        if (wants_surface_clips)
+            data.surface_clips = build_surface_clip_models(result, options);
         // Optional .hsz extension (v3 marks complete exact-union coverage).
         // Model order must match hull_surface_file,
         // including models with no collision in a particular hull.
@@ -865,6 +874,8 @@ namespace csg
         if (!write_text(base_path + ".hsz", data.hull_sizes))
             return false;
         if (!fs::write_all(base_path + ".pln", data.planes.data(), data.planes.size()))
+            return false;
+        if (!direct_clip::write_file(base_path + ".scl", data.surface_clips))
             return false;
         return fs::write_all(base_path + ".wa_", result.temp_wad.data(), result.temp_wad.size());
     }
