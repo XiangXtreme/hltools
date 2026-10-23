@@ -143,7 +143,7 @@ def solid_union(trees, points, hull):
 def tree_first_hit(tree, origins, directions, length, hull):
     hit = np.full(len(origins), np.inf)
     stack = [(int(tree.models[0]["head"][hull]), np.arange(len(origins)),
-              np.zeros(len(origins)), np.full(len(origins), length))]
+              np.zeros(len(origins)), np.full(len(origins), length, dtype=float))]
     while stack:
         node, indices, lo, hi = stack.pop()
         if not len(indices):
