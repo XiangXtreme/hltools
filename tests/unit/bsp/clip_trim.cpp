@@ -44,6 +44,30 @@ namespace
         map.models = {m, m};
         return map;
     }
+
+    void check_engine_hull_ranges(const format::map_data &map)
+    {
+        for (const auto &model : map.models)
+            for (int hull = 1; hull < bsp::num_hulls; ++hull)
+            {
+                const int first = model.headnode[hull];
+                std::vector<bool> seen(map.clipnodes.size());
+                std::vector<int> pending{first};
+                while (!pending.empty())
+                {
+                    int id = pending.back(); pending.pop_back();
+                    if (id < 0) continue;
+                    // GoldSrc sets firstclipnode to this hull's headnode.
+                    require(id >= first);
+                    require((size_t)id < map.clipnodes.size());
+                    if (seen[(size_t)id]) continue;
+                    seen[(size_t)id] = true;
+                    const auto &node = map.clipnodes[(size_t)id];
+                    pending.push_back(node.children[0]);
+                    pending.push_back(node.children[1]);
+                }
+            }
+    }
 }
 
 test("legacytrim uses cross-brush coverage and protects exterior fill and other hulls/models")
@@ -350,6 +374,7 @@ test("collision windows preserve every predicate assignment across shared model 
         expect(!state.options.deepclip);
         state.options.deepclip = deep;
         bsp::trim_legacy_collision(state);
+        check_engine_hull_ranges(map);
         auto classify = [](const format::map_data &data, int m, int h, unsigned assignment) {
             int id = data.models[m].headnode[h];
             for (int depth = 0; id >= 0 && depth < 1024; ++depth)

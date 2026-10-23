@@ -385,6 +385,8 @@ Predicates with exactly identical engine dot products use their ordered distance
 thresholds to remove implied decisions, with the axial fast paths kept separate.
 Trial accounting follows changed ancestors and shared references; unfinished
 trials leave the completed graph intact.
+Final collision nodes are ordered with parents before children, including
+shared descendants, to respect GoldSrc's per-hull headnode lower bound.
 By default, three deterministic exploration passes follow strict plane-order
 compaction. This threshold optimization balances compile time and node count.
 BSP's `-deepclip` option enables additional searches for collision unions

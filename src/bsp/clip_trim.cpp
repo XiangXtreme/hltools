@@ -1450,6 +1450,17 @@ namespace bsp
                 };
                 for (auto &m : models)
                     for (int h = 1; h < num_hulls; h++) m.headnode[h] = emit(m.headnode[h], 0);
+                // GoldSrc rejects descendants below a hull's headnode. Reverse
+                // the postorder globally so every parent precedes its children,
+                // including descendants shared by several model/hull roots.
+                const int last = (int)output.size() - 1;
+                std::reverse(output.begin(), output.end());
+                for (auto &n : output)
+                    for (auto &child : n.children)
+                        if (child >= 0) child = (short)(last - child);
+                for (auto &m : models)
+                    for (int h = 1; h < num_hulls; h++)
+                        if (m.headnode[h] >= 0) m.headnode[h] = last - m.headnode[h];
                 logging::info("collision union: %zu -> %zu clipnodes, %zu -> %zu planes\n",
                     map.clipnodes.size(), output.size(), map.planes.size(), output_planes.size());
                 map.models = std::move(models);
