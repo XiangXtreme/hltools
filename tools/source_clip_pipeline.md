@@ -216,3 +216,39 @@ All large outputs live under the supplied output directory:
 - `validation.json`, `validation_probes.npz`: independent probe results.
 
 The output BSPs are external collision models, not standalone playable maps.
+
+## Native Map Installation
+
+For the existing `surf_brs_native` map, install the repaired reference build
+into its already-preloaded external model paths:
+
+```powershell
+python tools/install_native_reference_clips.py `
+  --build build/tmp/source_boreas_pipeline_20261023 `
+  --game D:/steam/steamapps/common/Half-Life/cstrike `
+  --output build/tmp/surf_brs_native_reference_install_20261023 --install
+```
+
+Use a new output directory. Without `--install`, this stages and backs up the
+files for inspection. The installer verifies all 39 source repair hashes and
+script snapshots, map precache/wall references, collision structures and backup
+hashes before overwriting files. Installation failures attempt to restore the
+complete backup. The main map and texture carrier hashes must stay unchanged.
+
+The adapter preserves the native draw-tree container, its reserved empty node
+and the existing broad-phase bounds needed by the native loading setup. It
+extends those bounds when needed, offsets rebuilt collision references by one,
+and verifies that the resulting planes and collision nodes match the rebuilt
+source. Template draw-plane compatibility is checked before replacement.
+
+On 2026-10-23, all 39 installed files passed independent `sdHLInspect` checks
+and readback SHA256 verification. Total terrain clipnodes changed from 998129
+to 993676, including 39 reserved nodes; the largest file has 31092 nodes.
+Files 005, 006, 009 and 017 changed. The other 35 installed files were already
+byte-identical to the adapted original-Python rebuild. The main map remains
+SHA256 `0e5388e232bf76057e4f0fd8a8094198e34dbb41b83468b394bfa11c287d05fc`.
+
+The output directory contains `staged/`, `backup/` and `installation.json`
+with per-file source, before/after hashes, counts and structure checks.
+Disconnect and reload `map surf_brs_native` to test the installed files;
+an already-loaded map continues using its in-memory collision models.
