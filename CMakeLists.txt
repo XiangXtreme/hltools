@@ -270,6 +270,11 @@ target_include_directories(hltools_csg PUBLIC src)
 target_compile_definitions(hltools_csg PUBLIC HLTOOLS_DOUBLE_PRECISION)
 target_link_libraries(hltools_csg PUBLIC hltools_format hltools_math hltools_common)
 
+# Explicit diagnostic target; uses the real MAP parser and brush geometry.
+add_executable(brush_geometry_dump EXCLUDE_FROM_ALL tools/brush_geometry_dump.cpp)
+set_hltools_runtime_subdirectory(brush_geometry_dump tools)
+target_link_libraries(brush_geometry_dump PRIVATE hltools_csg)
+
 # bsp: solid tree build, portals, fill, tjunc, edges, and bsp writing
 add_library(hltools_bsp STATIC
     src/bsp/clip_trim.cpp
