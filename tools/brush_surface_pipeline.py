@@ -243,14 +243,49 @@ def leaf_edges(tree, points):
     raise ValueError("Clipnode cycle")
 
 
-def repair(tree, volumes, bb):
+def region_plane_union(tree, region, volumes):
+    """Direct half-space tests inside a leaf, avoiding fragment vertex incidence."""
+    root = -1
+    low, high = region.verts.min(0), region.verts.max(0)
+    for volume in volumes:
+        if np.any(volume["bounds"][0] > high + 1e-5) or np.any(volume["bounds"][1] < low - 1e-5):
+            continue
+        planes = volume["planes"]
+        distances = region.verts @ planes[:, :3].T - planes[:, 3]
+        if np.any(distances.min(0) > 1e-5):
+            continue
+        active = planes[distances.max(0) >= -1e-5]
+        inside = -2
+        extra = []
+        for p in reversed(active):
+            normal, distance = p[:3], p[3]
+            pid = len(tree.planes) + len(extra)
+            extra.append([*normal, distance, 3 + int(np.argmax(np.abs(normal)))])
+            tree.nodes.append((pid, root, inside))
+            inside = len(tree.nodes) - 1
+        if extra:
+            disk = np.array(extra)
+            disk[:, :4] = disk[:, :4].astype(np.float32)
+            tree.planes = np.r_[tree.planes, disk]
+        root = inside
+        if root == -2:
+            break
+    return root
+
+
+def repair(tree, volumes, bb, tolerance=TOL, extra_rays=None, max_rounds=5, local_builder="fragments"):
     started = time.perf_counter()
     points, origins, directions, length = probes(volumes, 20261023, 100000, 4096)
+    if extra_rays is not None:
+        additional_origins, additional_directions, additional_length = extra_rays
+        origins = np.r_[origins, additional_origins]
+        directions = np.r_[directions, additional_directions]
+        length = max(length, additional_length)
     expected = convex_hit(origins, directions, length, volumes)
     low = np.min([v["bounds"][0] for v in volumes], axis=0) - 2
     high = np.max([v["bounds"][1] for v in volumes], axis=0) + 2
     rounds = []
-    for iteration in range(5):
+    for iteration in range(max_rounds):
         table = bb.Planes()
         translation = [table.add(p[:3], p[3]) for p in tree.planes]
         region = bb.make_frag(table, np.array(list(itertools.product(*zip(low, high)))),
@@ -275,12 +310,12 @@ def repair(tree, volumes, bb):
         samples, owners = np.concatenate(samples), np.array(owners)
         clearance = margin(samples, volumes)
         labels = np.array([leaf[3] for leaf in leaves])[owners]
-        bad = set(owners[((labels == -2) & (clearance > TOL)) |
-                         ((labels == -1) & (clearance < -TOL))].tolist())
+        bad = set(owners[((labels == -2) & (clearance > tolerance)) |
+                         ((labels == -1) & (clearance < -tolerance))].tolist())
         actual = tree.hit(origins, directions, length)
         both = np.isfinite(actual) & np.isfinite(expected)
         wrong = np.zeros(len(actual), bool)
-        wrong[both] = np.abs(actual[both] - expected[both]) > TOL
+        wrong[both] = np.abs(actual[both] - expected[both]) > tolerance
         witnesses = [points]
         for fraction in (.05, .25, .5, .75, .95):
             distance = actual[wrong] * fraction + expected[wrong] * (1 - fraction)
@@ -294,21 +329,31 @@ def repair(tree, volumes, bb):
         witnesses = np.concatenate(witnesses)
         labels, parents, slots = leaf_edges(tree, witnesses)
         clearance = margin(witnesses, volumes)
-        wrong = ((labels == -2) & (clearance > TOL)) | ((labels == -1) & (clearance < -TOL))
+        wrong = ((labels == -2) & (clearance > tolerance)) | ((labels == -1) & (clearance < -tolerance))
         edges = set(zip(parents[wrong].tolist(), slots[wrong].tolist()))
         bad.update(i for i, (_, p, s, _) in enumerate(leaves) if (p, s) in edges)
         print(f"  repair {iteration}: {len(leaves)} leaves, {len(bad)} bad regions", flush=True)
         if not bad:
             break
-        fragments = [bb.make_frag(table, v["vertices"], v["planes"][:, :3], v["planes"][:, 3]) for v in volumes]
+        fragments = ([bb.make_frag(table, v["vertices"], v["planes"][:, :3], v["planes"][:, 3]) for v in volumes]
+                     if local_builder == "fragments" else [])
         before = len(tree.nodes)
         new_planes = []
         for i in sorted(bad):
             region, parent, slot, _ = leaves[i]
+            if local_builder == "planes":
+                root = region_plane_union(tree, region, volumes)
+                if parent < 0:
+                    tree.root = root
+                else:
+                    node = list(tree.nodes[parent])
+                    node[slot] = root
+                    tree.nodes[parent] = tuple(node)
+                continue
             rlo, rhi = region.verts.min(0), region.verts.max(0)
             local_frags = []
             for volume, fragment in zip(volumes, fragments):
-                if np.any(volume["bounds"][0] > rhi + TOL) or np.any(volume["bounds"][1] < rlo - TOL):
+                if np.any(volume["bounds"][0] > rhi + tolerance) or np.any(volume["bounds"][1] < rlo - tolerance):
                     continue
                 clipped = fragment
                 for pid, orientation in region.sides.items():

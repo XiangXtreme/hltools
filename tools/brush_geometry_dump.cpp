@@ -19,10 +19,11 @@ namespace
 
 int main(int argc, char **argv)
 {
-    if (argc != 3 && argc != 6)
+    const bool legacy_hulls = argc == 4 && std::string_view(argv[3]) == "--legacy-hulls";
+    if (argc != 3 && argc != 6 && !legacy_hulls)
     {
         std::cerr << "usage: brush_geometry_dump <input.map> <output.json>"
-                     " [--background <entity-number> <output-base>]\n";
+                     " [--legacy-hulls | --background <entity-number> <output-base>]\n";
         return 1;
     }
     int selected_entity = -1;
@@ -39,9 +40,15 @@ int main(int argc, char **argv)
     }
     threads::set_count(2);
     csg::csg_options options;
-    options.brush.noclip = true;
+    options.brush.noclip = !legacy_hulls;
     options.wad.map_path = argv[1];
-    auto result = csg::run_csg(csg::load_map_file(argv[1]), options);
+    auto source = csg::load_map_file(argv[1]);
+    if (legacy_hulls)
+    {
+        options.brush.clip = csg::clip_type::legacy;
+        for (auto &brush : source.brushes) brush.local_clip = (int)csg::clip_type::legacy;
+    }
+    auto result = csg::run_csg(std::move(source), options);
     std::ofstream out(argv[2]);
     if (!out) return 1;
     out << std::setprecision(17) << "{\"brushes\":[";
@@ -73,7 +80,37 @@ int main(int argc, char **argv)
                 }
                 out << "]}";
             }
-            out << "]}";
+            out << ']';
+            if (legacy_hulls)
+            {
+                out << ",\"legacy_hulls\":[";
+                for (int h = 1; h < csg::num_hulls; ++h)
+                {
+                    if (h > 1) out << ',';
+                    const auto &hull = brush.hulls[h];
+                    out << "{\"planes\":[";
+                    bool first = true;
+                    for (const auto &face : hull.faces)
+                    {
+                        if (!first) out << ',';
+                        first = false;
+                        const auto &p = result.planes[(size_t)face.planenum];
+                        out << '[' << p.normal.x << ',' << p.normal.y << ',' << p.normal.z << ',' << p.dist << ']';
+                    }
+                    out << "],\"vertices\":[";
+                    first = true;
+                    for (const auto &face : hull.faces)
+                        for (const auto &point : face.winding.points())
+                        {
+                            if (!first) out << ',';
+                            first = false;
+                            vector(out, point);
+                        }
+                    out << "]}";
+                }
+                out << ']';
+            }
+            out << '}';
         }
     out << "]}\n";
     out.close();
