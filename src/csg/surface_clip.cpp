@@ -51,6 +51,14 @@ namespace csg
             std::set<int> used;
         };
 
+        struct boundary_plane_ranges
+        {
+            std::vector<std::pair<vec_t, vec_t>> values;
+            std::vector<size_t> min_indices;
+            std::vector<size_t> max_indices;
+            std::vector<int> members;
+        };
+
         // Convex polyhedron used by the boundary-normalized composition.
         // Incidence records are deliberately retained: the same two-plane
         // edge rule is used by brushbsp.py when a splitter cuts a fragment.
@@ -59,6 +67,7 @@ namespace csg
             point_list vertices;
             std::vector<std::set<int>> incidence;
             std::shared_ptr<std::map<int, direct_clip::plane>> constraints;
+            std::shared_ptr<boundary_plane_ranges> boundary_ranges;
             math::bounding_box bounds;
         };
 
@@ -83,11 +92,6 @@ namespace csg
             std::vector<boundary_term> terms;
         };
 
-        struct boundary_plane_ranges
-        {
-            std::vector<std::pair<vec_t, vec_t>> values;
-            std::vector<int> members;
-        };
 
         struct triangle
         {
@@ -1345,18 +1349,84 @@ namespace csg
             boundary_plane_ranges ranges;
             ranges.values.resize(planes.size(), {
                 std::numeric_limits<vec_t>::max(), -std::numeric_limits<vec_t>::max()});
+            ranges.min_indices.resize(planes.size(), 0);
+            ranges.max_indices.resize(planes.size(), 0);
             ranges.members.reserve(planes.size());
             for (size_t i = 0; i < planes.size(); i++)
             {
-                for (const auto &v : piece.vertices)
+                for (size_t vertex = 0; vertex < piece.vertices.size(); vertex++)
                 {
+                    const auto &v = piece.vertices[vertex];
                     const vec_t value = math::dot(v, planes[i].normal) - planes[i].dist;
-                    ranges.values[i].first = std::min(ranges.values[i].first, value);
-                    ranges.values[i].second = std::max(ranges.values[i].second, value);
+                    if (value < ranges.values[i].first)
+                    {
+                        ranges.values[i].first = value;
+                        ranges.min_indices[i] = vertex;
+                    }
+                    if (value > ranges.values[i].second)
+                    {
+                        ranges.values[i].second = value;
+                        ranges.max_indices[i] = vertex;
+                    }
                 }
                 if (ranges.values[i].second <= (vec_t)1e-6) ranges.members.push_back((int)i);
             }
             return ranges;
+        }
+
+        std::shared_ptr<boundary_plane_ranges> boundary_ranges_after_clip(
+            const boundary_poly &input,
+            const boundary_poly &output,
+            const std::vector<direct_clip::plane> &planes)
+        {
+            if (!input.boundary_ranges)
+                return std::make_shared<boundary_plane_ranges>(
+                    boundary_plane_ranges_for(output, planes));
+
+            const auto &old = *input.boundary_ranges;
+            auto result = std::make_shared<boundary_plane_ranges>();
+            result->values = old.values;
+            result->min_indices.resize(old.min_indices.size(), 0);
+            result->max_indices.resize(old.max_indices.size(), 0);
+            result->members.reserve(old.members.size());
+            std::vector<int> output_for_input(input.vertices.size(), -1);
+            for (size_t old_index = 0; old_index < input.vertices.size(); old_index++)
+                for (size_t new_index = 0; new_index < output.vertices.size(); new_index++)
+                    if (math::length(input.vertices[old_index] - output.vertices[new_index]) <= (vec_t)1e-7)
+                    {
+                        output_for_input[old_index] = (int)new_index;
+                        break;
+                    }
+            for (size_t i = 0; i < planes.size(); i++)
+            {
+                const int min_index = old.min_indices[i] < output_for_input.size()
+                    ? output_for_input[old.min_indices[i]] : -1;
+                const int max_index = old.max_indices[i] < output_for_input.size()
+                    ? output_for_input[old.max_indices[i]] : -1;
+                if (min_index >= 0)
+                    result->min_indices[i] = (size_t)min_index;
+                if (max_index >= 0)
+                    result->max_indices[i] = (size_t)max_index;
+                if (min_index < 0 || max_index < 0)
+                {
+                    vec_t minv = std::numeric_limits<vec_t>::max();
+                    vec_t maxv = -std::numeric_limits<vec_t>::max();
+                    size_t min_vertex = 0;
+                    size_t max_vertex = 0;
+                    for (size_t vertex = 0; vertex < output.vertices.size(); vertex++)
+                    {
+                        const auto &v = output.vertices[vertex];
+                        const vec_t value = math::dot(v, planes[i].normal) - planes[i].dist;
+                        if (value < minv) { minv = value; min_vertex = vertex; }
+                        if (value > maxv) { maxv = value; max_vertex = vertex; }
+                    }
+                    if (min_index < 0) { result->values[i].first = minv; result->min_indices[i] = min_vertex; }
+                    if (max_index < 0) { result->values[i].second = maxv; result->max_indices[i] = max_vertex; }
+                }
+                if (result->values[i].second <= (vec_t)1e-6)
+                    result->members.push_back((int)i);
+            }
+            return result;
         }
 
         bool boundary_subset(const std::vector<int> &small, const std::vector<int> &large)
@@ -1389,7 +1459,10 @@ namespace csg
                 visited++;
                 if (visited > 20000)
                     err::fatal("pyboundary: adaptive composition exceeded the piece budget");
-                auto ranges = boundary_plane_ranges_for(piece, planes);
+                if (!piece.boundary_ranges)
+                    piece.boundary_ranges = std::make_shared<boundary_plane_ranges>(
+                        boundary_plane_ranges_for(piece, planes));
+                const auto &ranges = *piece.boundary_ranges;
                 const auto &members = ranges.members;
                 if (accepted.count(members)) continue;
                 bool absorbed = false;
@@ -1458,6 +1531,10 @@ namespace csg
                     back_plane.normal = -back_plane.normal;
                     back_plane.dist = -back_plane.dist;
                     auto back = clip_boundary_poly(piece, back_plane, index);
+                    if (front)
+                        front->boundary_ranges = boundary_ranges_after_clip(piece, *front, planes);
+                    if (back)
+                        back->boundary_ranges = boundary_ranges_after_clip(piece, *back, planes);
                     if (front && back)
                     {
                         pending.push_back(std::move(*front));
