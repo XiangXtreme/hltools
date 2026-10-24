@@ -293,6 +293,27 @@ suite("unit.csg.cliptype")
                == (int)csg::clip_type::exactunion);
     }
 
+    test("cliptype.pyboundary keeps a detail model separate from worldspawn")
+    {
+        const std::filesystem::path scratch =
+            test_support::scratch_directory("csg_cliptype_surface_detail");
+        const std::string wad_path = (scratch / "textures.wad").string();
+        test_wad::write(wad_path, {"STONE"});
+
+        csg::csg_options options;
+        options.brush.clip = csg::clip_type::simple;
+        options.wad.map_path = wad_path;
+        options.wad.wad_textures = true;
+        csg::csg_result result =
+            csg::run_csg(make_map(wad_path, "func_detail", "pyboundary"), options);
+
+        require(result.map.entities.size() == 2);
+        expect(std::string(result.map.entities[1].value("classname")) == "func_wall");
+        require(result.map.entities[1].num_brushes == 1);
+        expect(result.map.brushes[(size_t)result.map.entities[1].first_brush].local_clip
+               == (int)csg::clip_type::pyboundary);
+    }
+
     test("cliptype.func_group and unknown values inherit the global setting")
     {
         const std::filesystem::path scratch =

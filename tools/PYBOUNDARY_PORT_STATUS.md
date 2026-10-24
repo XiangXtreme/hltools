@@ -125,3 +125,9 @@ bin/hltools.exe compile -threads 2 -cliptype pyboundary build/tmp/untitledx_pybo
 - 该补片把内部 brush 面重新带入碰撞树，虽然能让少数墙内采样点变为 `CONTENTS_SOLID`，却改变了连续外表面的形态，产生用户反馈的明显楔形凸起；因此已撤回，不能作为正式算法。
 - 当前 `pyboundary` 恢复为 whole-entity composition：`cliptype_sl` hull1/hull3 各 25 nodes，总 50 clipnodes；这是用户认可的平滑形态基线。穿墙问题仍需独立解决，不能用改变外形的内部面补片掩盖。
 - 小型树写入 GoldSrc BSP 时的轴向平面规范化仍保留；大型 terrain 树继续保留 Python 参考方向。
+
+## 2026-10-24 per-entity pyboundary
+
+- `pyboundary` 默认不再要求全图使用；地图可保持 `-cliptype simple`，仅在 `func_detail` 上设置 `"zhlt_cliptype" "pyboundary"`。
+- 带 `pyboundary`/`pyexact` 局部覆盖的 `func_detail` 会保留为独立 brush model，输出时转为 GoldSrc 可挂载的 `func_wall`；worldspawn 和其他实体继续使用全局 cliptype。
+- `cliptype_sl.map` 已验证：worldspawn 使用普通 simple hull，局部 `func_detail` 生成独立 pyboundary model 1，hull1/hull3 各 8 nodes。测试 BSP：`D:/steam/steamapps/common/Half-Life/cstrike/maps/cliptype_sl_pyboundary_entity.bsp`。

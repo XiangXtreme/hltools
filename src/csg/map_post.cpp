@@ -311,6 +311,30 @@ namespace csg
             }
         }
 
+        // Surface collision trees replace the hulls of one brush model at
+        // BSP write time.  Keep a func_detail that explicitly requests one
+        // of those modes as its own brush entity so it can coexist with
+        // ordinary worldspawn collision.  GoldSrc has no runtime
+        // func_detail class, so use func_wall for the emitted model while
+        // retaining the per-brush clip override.
+        bool preserve_surface_detail(map_source &map, int entity_num)
+        {
+            map_entity &entity = map.entities[(size_t)entity_num];
+            if (std::strcmp(entity.value("classname"), "func_detail") != 0)
+                return false;
+
+            clip_type local = clip_type::inherit;
+            const char *value = entity.value("zhlt_cliptype");
+            if (!*value || !parse_clip_type(value, local)
+                || (local != clip_type::pyboundary && local != clip_type::pyexact))
+                return false;
+
+            for (int i = 0; i < entity.num_brushes; i++)
+                map.brushes[(size_t)entity.first_brush + i].local_clip = (int)local;
+            entity.set_value("classname", "func_wall");
+            return true;
+        }
+
         // registers the hull shape then deletes the entity and its brushes,
         // like the reference createhullshape + deletecurrententity
         void delete_hullshape_entity(map_source &map, int entity_num)
@@ -395,6 +419,8 @@ namespace csg
             if (std::strcmp(classname, "func_group") == 0
                 || std::strcmp(classname, "func_detail") == 0)
             {
+                if (preserve_surface_detail(map, entity_num))
+                    return false;
                 merge_into_worldspawn(map, entity_num);
                 return true;
             }
