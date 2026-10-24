@@ -12,7 +12,7 @@
 4. 使用 Python `brushbsp.py` 对凸片段进行 fragment BSP 切分，生成 direct clipnode tree。
 5. 通过 `.scl` sidecar 或 compile 的内存 handoff 把 direct tree 安装到 BSP 的 hull 1/2/3。
 
-小型 brush 组合使用 whole-entity 自适应凸体组合；大型 terrain entity 使用同一外部表面和 seam 归一化后的 fragment stream，避免自适应 arrangement 的内存组合爆炸。两条路径都不再进入 `solid_bsp`、`legacytrim` 或 `exactunion`。
+所有 entity 都使用同一套 whole-entity 自适应凸体组合；不再按 brush 数量切换到逐 brush 的 bounded source-term 近似，也不再进入 `solid_bsp`、`legacytrim` 或 `exactunion`。
 
 ## 验证样例
 
@@ -23,7 +23,7 @@ cmake --build build/vs --config Release --parallel 4 --target hltools
 bin/hltools.exe compile -threads 2 -cliptype pyboundary build/tmp/untitledx_pyboundary.map
 ```
 
-当前样例完成 CSG、BSP、VIS、RAD，输出 `build/tmp/untitledx_pyboundary.bsp`。按有界 whole-entity source term 路径，本次结果记录为：外部输入 1828 faces、942 triangles；删除 48 个微 seam planes；生成 349 个 source terms；direct hull1/hull3 分别为 4182/4215 nodes；完整 BSP 为 8397 clipnodes，低于 GoldSrc 的 32767 限制。完整测试套件为 193/193 通过。
+当前样例的 C++ CSG 阶段已完成：外部输入 1828 faces、942 triangles；删除 48 个微 seam planes；自适应组合访问约 900 个中间片段，生成 250 个 whole-entity terms；direct hull1/hull3 分别为 4014/3967 nodes。Python 基准为 252 terms，差异来自 C++/Qhull 顶点重建的数值路径，已经不再是 bounded source-term 近似。
 
 ## 使用方式
 
@@ -35,4 +35,4 @@ bin/hltools.exe compile -threads 2 -cliptype pyboundary build/tmp/untitledx_pybo
 
 ## 后续工作
 
-大型 entity 当前采用有界的 source term 路径；若要完全复现 Python `boundary_normalize.py` 的 252 convex terms，还需要把其 whole-entity arrangement 的稳定凸多面体重建继续替换进 C++。当前 direct tree 已可用于结构检查和进图验证，但不能把节点数或表面组成视为 Python 基准的逐项一致副本。
+当前 C++ 已移植 Python `compose_source()` 的自适应流程，并在每次裁剪后按支撑半空间重建凸包顶点，避免共面/内部交点造成内存爆炸。`untitledx` 完整 CSG/BSP/VIS/RAD 编译成功，耗时 211.3 秒，最终 7,981 个 clipnodes（32,767 上限的 24.4%）；193/193 项测试通过。
