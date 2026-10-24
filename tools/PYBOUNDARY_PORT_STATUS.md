@@ -65,6 +65,12 @@ bin/hltools.exe compile -threads 2 -cliptype pyboundary build/tmp/untitledx_pybo
 - composition pending 窗口的 `std::async` 预取实验未采用：几何结果不变，但由于 pending 顺序导致部分预取浪费，总耗时约 `16.2s`，没有超过当前基线。
 - 当前保留的算法级取舍仍是 splitter 候选上限 `12`；若继续追求小秒级，需要改成共享裁剪 DAG 或固定线程池批处理，而不是继续增加临时缓存。
 
+## 2026-10-24 composition profiling
+
+- `untitledx` 的当前基线 composition 约 `8.7s`：326 次独立 evaluation 中 closure 约 `1.4s`、source subtraction 约 `7.2s`、adaptive split 约 `0.04s`。
+- subtraction 统计约 `270,974` 次 `clip_boundary_poly`、`123,120` 次 hull-edge 构建和 `9,959,286` 次 source plane vertex 检查。这里才是继续压到小秒级的主要目标。
+- 将 hull-edge 的顶点对扫描改为按 supporting face 用 `std::map` 计数的实验反而使 composition 增至约 `9.9s`，已撤回。后续若继续，应实现裁剪过程的增量 edge topology，避免每个新 fragment 重建通用 hull-edge 集合。
+
 验证副本：`build/tmp/untitledx_pyboundary.bsp`；上一版纯压缩副本：`build/tmp/untitledx_pyboundary_compacted.bsp`。
 
 最新验证：`untitledx` 的 CSG 阶段约 15～16 秒，完整 CSG/BSP/VIS/RAD 编译耗时约 19.3 秒；最终仍为 7,981 个 clipnodes（32,767 上限的 24.4%）、hull1/hull3 为 4,014/3,967，几何统计与前一版一致。193/193 项测试通过。
