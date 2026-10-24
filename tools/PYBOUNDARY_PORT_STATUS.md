@@ -41,9 +41,10 @@ bin/hltools.exe compile -threads 2 -cliptype pyboundary build/tmp/untitledx_pybo
 
 - source brush envelope 和外表面提取都建立一次静态 BVH；查询结果按原 brush 顺序恢复，只跳过 AABB 已证明不相交的 brush，不改变裁剪顺序。
 - 移植 `brushbsp.py` 的 `compact()`：后序访问树，折叠两个相同子树，并用 `(plane, front, back)` 去重，再反转索引保持父节点先于子节点。
-- `untitledx_pyboundary.map` 的 hull1/hull3 从 `4014/3967` 个直接节点压缩为 `2541/2405`，最终 BSP clipnodes 从 `7981` 降为 `4946`；随机 10,000 点对 hull1/2/3 的旧树和压缩树判定均为 0 差异。
-- 完整 `compile -threads 2 -cliptype pyboundary` 约 20.3 秒，CSG 阶段约 16.0 秒；`ctest` 193/193 通过。
+- `untitledx_pyboundary.map` 的直接树先从 `4014/3967` 压缩到约 `2541/2405`；随后 fragment incidence/sides/used 改为位集，当前实测 hull1/hull3 为 `2682/2454`，最终 BSP clipnodes 为 `5136`。随机 10,000 点对两个版本的 hull1/2/3 判定均为 0 差异。
+- 位集版本完整 `compile -threads 2 -cliptype pyboundary` 约 17.4 秒（CSG 单独运行约 14～17 秒，受机器负载影响）；`ctest` 193/193 通过。
+- 位集版本的节点数略高于纯压缩版本，后续仍需优化 splitter 评分，使节点数和生成时间同时下降。
 
-验证副本：`build/tmp/untitledx_pyboundary_compacted.bsp`。
+验证副本：`build/tmp/untitledx_pyboundary.bsp`；上一版纯压缩副本：`build/tmp/untitledx_pyboundary_compacted.bsp`。
 
 最新验证：`untitledx` 的 CSG 阶段约 15～16 秒，完整 CSG/BSP/VIS/RAD 编译耗时约 19.3 秒；最终仍为 7,981 个 clipnodes（32,767 上限的 24.4%）、hull1/hull3 为 4,014/3,967，几何统计与前一版一致。193/193 项测试通过。

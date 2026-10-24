@@ -47,10 +47,80 @@ namespace csg
         struct fragment
         {
             point_list vertices;
-            std::vector<std::set<int>> incidence;
-            std::set<int> sides;
-            std::set<int> used;
+            using plane_mask = std::vector<uint64_t>;
+            std::vector<plane_mask> incidence;
+            plane_mask sides;
+            plane_mask used;
         };
+
+        using fragment_plane_mask = fragment::plane_mask;
+
+        void fragment_mask_set(fragment_plane_mask &mask, int plane)
+        {
+            if (plane < 0) return;
+            const size_t word = (size_t)plane / 64;
+            if (mask.size() <= word) mask.resize(word + 1, 0);
+            mask[word] |= uint64_t(1) << (plane % 64);
+        }
+
+        bool fragment_mask_test(const fragment_plane_mask &mask, int plane)
+        {
+            const size_t word = (size_t)plane / 64;
+            return word < mask.size() && (mask[word] & (uint64_t(1) << (plane % 64))) != 0;
+        }
+
+        int fragment_mask_popcount(uint64_t value)
+        {
+            int result = 0;
+            while (value)
+            {
+                value &= value - 1;
+                result++;
+            }
+            return result;
+        }
+
+        int fragment_mask_first_bit(uint64_t value)
+        {
+            int result = 0;
+            while ((value & uint64_t(1)) == 0) { value >>= 1; result++; }
+            return result;
+        }
+
+        bool fragment_mask_contains(const fragment_plane_mask &large,
+                                    const fragment_plane_mask &small)
+        {
+            for (size_t i = 0; i < small.size(); i++)
+                if (((i >= large.size() ? 0 : large[i]) & small[i]) != small[i])
+                    return false;
+            return true;
+        }
+
+        void fragment_mask_or(fragment_plane_mask &destination,
+                              const fragment_plane_mask &source)
+        {
+            if (destination.size() < source.size()) destination.resize(source.size(), 0);
+            for (size_t i = 0; i < source.size(); i++) destination[i] |= source[i];
+        }
+
+        fragment_plane_mask fragment_mask_intersection(const fragment_plane_mask &a,
+                                                       const fragment_plane_mask &b)
+        {
+            fragment_plane_mask result(std::min(a.size(), b.size()), 0);
+            for (size_t i = 0; i < result.size(); i++) result[i] = a[i] & b[i];
+            return result;
+        }
+
+        void fragment_normalize_masks(std::vector<fragment> &fragments, size_t plane_count)
+        {
+            const size_t words = (plane_count + 63) / 64;
+            for (auto &fragment : fragments)
+            {
+                fragment.sides.resize(words, 0);
+                fragment.used.resize(words, 0);
+                for (auto &incidence : fragment.incidence) incidence.resize(words, 0);
+            }
+        }
 
         struct boundary_plane_ranges
         {
@@ -505,22 +575,22 @@ namespace csg
                 local_planes.push_back(id);
                 for (size_t i = 0; i < out.vertices.size(); i++)
                     if (std::fabs(math::dot(p.normal, out.vertices[i]) - p.dist) <= fragment_epsilon * 10)
-                        out.incidence[i].insert(id);
+                        fragment_mask_set(out.incidence[i], id);
             }
             for (int id = 0; id < (int)planes.values.size(); id++)
             {
                 int count = 0;
                 for (const auto &inc : out.incidence)
-                    count += inc.count(id) != 0;
-                if (count >= 3) out.sides.insert(id);
+                    count += fragment_mask_test(inc, id) ? 1 : 0;
+                if (count >= 3) fragment_mask_set(out.sides, id);
             }
             return out;
         }
 
-        void merge_vertices(point_list &vertices, std::vector<std::set<int>> &incidence)
+        void merge_vertices(point_list &vertices, std::vector<fragment_plane_mask> &incidence)
         {
             point_list new_vertices;
-            std::vector<std::set<int>> new_incidence;
+            std::vector<fragment_plane_mask> new_incidence;
             std::map<std::tuple<long long, long long, long long>, size_t> lookup;
             const vec_t step = fragment_epsilon * 4;
             for (size_t i = 0; i < vertices.size(); i++)
@@ -538,7 +608,7 @@ namespace csg
                 else
                 {
                     auto &dst = new_incidence[it->second];
-                    dst.insert(incidence[i].begin(), incidence[i].end());
+                    fragment_mask_or(dst, incidence[i]);
                 }
             }
             vertices = std::move(new_vertices);
@@ -560,29 +630,28 @@ namespace csg
             if (maxv <= fragment_epsilon || minv >= -fragment_epsilon)
             {
                 auto copy = std::make_unique<fragment>(input);
-                if (input.sides.count(pid)) copy->used.insert(pid);
+                if (fragment_mask_test(input.sides, pid)) fragment_mask_set(copy->used, pid);
                 if (maxv <= fragment_epsilon)
                     return {nullptr, std::move(copy)};
                 return {std::move(copy), nullptr};
             }
 
             point_list cuts;
-            std::vector<std::set<int>> cut_incidence;
+            std::vector<fragment_plane_mask> cut_incidence;
             for (size_t i = 0; i < input.vertices.size(); i++)
                 if (side[i] < -fragment_epsilon)
                     for (size_t j = 0; j < input.vertices.size(); j++)
                         if (side[j] > fragment_epsilon)
                         {
+                            const auto common_mask = fragment_mask_intersection(
+                                input.incidence[i], input.incidence[j]);
                             int common = 0;
-                            for (int p : input.incidence[i]) common += input.incidence[j].count(p) != 0;
+                            for (uint64_t word : common_mask) common += fragment_mask_popcount(word);
                             if (common < 2) continue;
                             vec_t t = side[i] / (side[i] - side[j]);
                             cuts.push_back(input.vertices[i] + (input.vertices[j] - input.vertices[i]) * t);
-                            std::set<int> inc;
-                            std::set_intersection(input.incidence[i].begin(), input.incidence[i].end(),
-                                                  input.incidence[j].begin(), input.incidence[j].end(),
-                                                  std::inserter(inc, inc.begin()));
-                            inc.insert(pid);
+                            auto inc = common_mask;
+                            fragment_mask_set(inc, pid);
                             cut_incidence.push_back(std::move(inc));
                         }
 
@@ -597,20 +666,28 @@ namespace csg
                     out.vertices.push_back(input.vertices[i]);
                     out.incidence.push_back(input.incidence[i]);
                     if (std::fabs(side[i]) <= fragment_epsilon)
-                        out.incidence.back().insert(pid);
+                        fragment_mask_set(out.incidence.back(), pid);
                 }
                 out.vertices.insert(out.vertices.end(), cuts.begin(), cuts.end());
                 out.incidence.insert(out.incidence.end(), cut_incidence.begin(), cut_incidence.end());
                 merge_vertices(out.vertices, out.incidence);
-                for (const auto &old : input.sides)
+                for (size_t word_index = 0; word_index < input.sides.size(); word_index++)
                 {
-                    int count = 0;
-                    for (const auto &inc : out.incidence) count += inc.count(old) != 0;
-                    if (count >= 3) out.sides.insert(old);
+                    uint64_t bits = input.sides[word_index];
+                    while (bits)
+                    {
+                        const int bit = fragment_mask_first_bit(bits);
+                        const int old = (int)(word_index * 64 + bit);
+                        int count = 0;
+                        for (const auto &inc : out.incidence)
+                            count += fragment_mask_test(inc, old) ? 1 : 0;
+                        if (count >= 3) fragment_mask_set(out.sides, old);
+                        bits &= bits - 1;
+                    }
                 }
-                out.sides.insert(pid);
+                fragment_mask_set(out.sides, pid);
                 out.used = input.used;
-                out.used.insert(pid);
+                fragment_mask_set(out.used, pid);
             }
             return {std::move(result[0]), std::move(result[1])};
         }
@@ -622,18 +699,26 @@ namespace csg
             if (depth > 4096)
                 err::fatal("pyexact: fragment BSP depth exceeded");
             for (const auto &f : fragments)
-            {
-                bool complete = true;
-                for (int side : f.sides)
-                    if (!f.used.count(side)) { complete = false; break; }
-                if (complete) return -2;
-            }
+                if (fragment_mask_contains(f.used, f.sides)) return -2;
 
-            std::set<int> candidate_set;
+            std::vector<int> candidates;
+            std::vector<uint8_t> candidate_seen(planes.values.size(), 0);
             for (const auto &f : fragments)
-                for (int side : f.sides)
-                    if (!f.used.count(side)) candidate_set.insert(side);
-            std::vector<int> candidates(candidate_set.begin(), candidate_set.end());
+                for (size_t word_index = 0; word_index < f.sides.size(); word_index++)
+                {
+                    const uint64_t used = word_index < f.used.size() ? f.used[word_index] : 0;
+                    uint64_t bits = f.sides[word_index] & ~used;
+                    while (bits)
+                    {
+                        const int plane = (int)(word_index * 64 + fragment_mask_first_bit(bits));
+                        if (plane < (int)candidate_seen.size() && !candidate_seen[(size_t)plane])
+                        {
+                            candidate_seen[(size_t)plane] = 1;
+                            candidates.push_back(plane);
+                        }
+                        bits &= bits - 1;
+                    }
+                }
             if (candidates.empty()) return -2;
             // Match brushbsp.py's bounded splitter survey.  Without this cap
             // a large terrain shell spends most of its time scoring every
@@ -1843,15 +1928,16 @@ namespace csg
                     for (size_t i = 0; i < f.vertices.size(); i++)
                         if (std::fabs(math::dot(f.vertices[i], p.normal) - p.dist) <= fragment_epsilon * 10)
                         {
-                            f.incidence[i].insert(pid);
+                            fragment_mask_set(f.incidence[i], pid);
                             count++;
                         }
-                    if (count >= 3) f.sides.insert(pid);
+                    if (count >= 3) fragment_mask_set(f.sides, pid);
                 }
                 if (f.vertices.size() >= 4 && !f.sides.empty())
                     fragments.push_back(std::move(f));
             }
             if (fragments.empty()) return tree;
+            fragment_normalize_masks(fragments, output_planes.values.size());
             logging::info("pyboundary: %zu terms, %zu active planes, hull half %g %g %g\n",
                           fragments.size(), output_planes.values.size(),
                           (double)half.x, (double)half.y, (double)half.z);
@@ -1894,6 +1980,7 @@ namespace csg
             for (const triangle &tri : triangles)
                 fragments.push_back(make_fragment(planes, tri, half));
             if (fragments.empty()) return tree;
+            fragment_normalize_masks(fragments, planes.values.size());
             logging::info("pyexact: fragment input %zu triangles, %zu planes\n",
                           triangles.size(), planes.values.size());
             tree.head = build_tree(std::move(fragments), planes, tree.nodes);
