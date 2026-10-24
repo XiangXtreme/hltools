@@ -480,8 +480,7 @@ namespace csg
 
         std::vector<triangle> extract_triangles(const csg_result &result,
                                                  const built_entity &entity,
-                                                 bool boundary_only = false,
-                                                 bool preserve_internal = false)
+                                                 bool boundary_only = false)
         {
             size_t input_faces = 0, exterior_fragments = 0;
             std::vector<const built_brush *> brushes;
@@ -519,7 +518,6 @@ namespace csg
                     const auto candidates = volume_index.query(face_bounds);
                     for (int other_index : candidates)
                     {
-                        if (preserve_internal) break;
                         const size_t other = (size_t)other_index;
                         if (other == owner || bounds_disjoint(face_bounds, volumes[other].bounds))
                             continue;
@@ -2006,8 +2004,7 @@ namespace csg
 
         direct_clip::tree build_boundary_hull(
             const boundary_composition &composition,
-            const math::vec3v &half,
-            const std::vector<triangle> *wall_triangles = nullptr)
+            const math::vec3v &half)
         {
             direct_clip::tree tree;
             if (composition.boundaries.empty() || composition.terms.empty()) return tree;
@@ -2047,12 +2044,6 @@ namespace csg
                 if (f.vertices.size() >= 4 && !f.sides.empty())
                     fragments.push_back(std::move(f));
             }
-            if (wall_triangles)
-                for (const auto &tri : *wall_triangles)
-                    if (std::fabs(tri.normal.z) < (vec_t)0.001
-                        && (std::fabs(std::fabs(tri.normal.x) - (vec_t)1) < (vec_t)0.001
-                            || std::fabs(std::fabs(tri.normal.y) - (vec_t)1) < (vec_t)0.001))
-                        fragments.push_back(make_fragment(output_planes, tri, half));
             if (fragments.empty()) return tree;
             fragment_normalize_masks(fragments, output_planes.values.size());
             logging::info("pyboundary: %zu terms, %zu active planes, hull half %g %g %g\n",
@@ -2176,20 +2167,15 @@ namespace csg
                     if (brush.pyboundary && brush.contents == content::solid && !brush.skipped
                         && !brush.hulls[0].faces.empty())
                         brushes.push_back(&brush);
+                // This is the reference path used by untitledx_pyboundary:
+                // compose the continuous exterior boundary into whole-entity
+                // convex terms, then expand those terms for each player hull.
                 const auto composition = prepare_boundary_composition(triangles, brushes, result);
-                std::vector<triangle> wall_triangles;
-                // Small closed room assemblies can contain concave brush
-                // joins whose internal wall planes are absent from the
-                // exterior composition.  Restore only those axis-aligned
-                // wall facets; larger terrain compositions stay on the
-                // reference whole-entity path.
-                if (composition.terms.size() <= 16)
-                    wall_triangles = extract_triangles(result, entity, false, true);
-                auto hull1 = std::async(std::launch::async, [&composition, &wall_triangles, &options]() {
-                    return build_boundary_hull(composition, options.hull_size[1][1], &wall_triangles);
+                auto hull1 = std::async(std::launch::async, [&composition, &options]() {
+                    return build_boundary_hull(composition, options.hull_size[1][1]);
                 });
-                auto hull3 = std::async(std::launch::async, [&composition, &wall_triangles, &options]() {
-                    return build_boundary_hull(composition, options.hull_size[3][1], &wall_triangles);
+                auto hull3 = std::async(std::launch::async, [&composition, &options]() {
+                    return build_boundary_hull(composition, options.hull_size[3][1]);
                 });
                 model.hulls[1] = hull1.get();
                 model.hulls[2] = model.hulls[1];

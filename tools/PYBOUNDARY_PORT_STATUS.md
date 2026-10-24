@@ -119,9 +119,9 @@ bin/hltools.exe compile -threads 2 -cliptype pyboundary build/tmp/untitledx_pybo
 - direct tree 安装保留原始平面方向和子节点顺序；这与参考 BSP 的 clipnode 编码一致，不能再对轴向平面做正轴规范化。
 - 最新 C++ 输出与参考 `untitledx_pyboundary.bsp` 的 planes、clipnodes、models、visibility、lighting 等 BSP lump 均逐字节一致，只有实体文本中的编译信息不同。
 
-## 2026-10-24 world brush seam sealing
+## 2026-10-24 world brush seam sealing experiment reverted
 
-- `cliptype_sl` 的 whole-entity composition 在凹接缝处会漏掉少量墙面；仅对小型闭合组合（不超过 16 个 whole terms）加入原始轴对齐墙面片段，坡面仍使用 whole composition。
-- `cliptype_sl` 最终验证版 hull1/hull3 各 44 nodes、总 88 clipnodes；已知墙点 `(-30,60,20)`、`(80,0,21)` 以及四个坡面点均为 `CONTENTS_SOLID`，出生点保持为空。
-- 大型 terrain composition 不启用墙面补片；`untitledx` 输出的 planes、clipnodes、models、VIS、RAD 等关键 lump 与参考 BSP 逐字节一致。
-- 小型树在写入 GoldSrc BSP 时规范化负轴向平面，大型 terrain 树保留 Python 原始方向，以同时满足墙体封闭和参考 terrain 形态。
+- 为修复 `cliptype_sl` 凹接缝漏墙，曾对小型闭合组合加入原始轴对齐墙面片段。
+- 该补片把内部 brush 面重新带入碰撞树，虽然能让少数墙内采样点变为 `CONTENTS_SOLID`，却改变了连续外表面的形态，产生用户反馈的明显楔形凸起；因此已撤回，不能作为正式算法。
+- 当前 `pyboundary` 恢复为 whole-entity composition：`cliptype_sl` hull1/hull3 各 25 nodes，总 50 clipnodes；这是用户认可的平滑形态基线。穿墙问题仍需独立解决，不能用改变外形的内部面补片掩盖。
+- 小型树写入 GoldSrc BSP 时的轴向平面规范化仍保留；大型 terrain 树继续保留 Python 参考方向。
