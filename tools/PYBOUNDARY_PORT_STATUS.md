@@ -51,6 +51,7 @@ bin/hltools.exe compile -threads 2 -cliptype pyboundary build/tmp/untitledx_pybo
 - `split_fragment()` 现在在每个树节点复用 `side`、cut 顶点和 cut incidence 缓冲；`build_tree()` 复用候选平面 generation 标记数组，并按评分阶段得到的 front/back/cut 数量预留子树容量。
 - 这些改动不改变候选排序、EPS、切割顺序或 compact 规则；`untitledx` 仍生成 hull1/hull3 `2682/2454` direct nodes 和 `5136` final clipnodes。
 - Release 实测完整 `compile -threads 2 -cliptype pyboundary` 约 `16.1～16.3s`；193/193 项测试通过。相对单次运行的差异应以同机重复测量为准。
+- `split_fragment()` 的边交集检查进一步改为先无分配统计共同 incidence 位数，只有确认至少两个共同约束时才创建交集 bitset；输出拓扑保持不变，单次完整编译受机器负载影响约 `16.7～16.9s`，暂未观察到稳定的总耗时下降。
 
 验证副本：`build/tmp/untitledx_pyboundary.bsp`；上一版纯压缩副本：`build/tmp/untitledx_pyboundary_compacted.bsp`。
 

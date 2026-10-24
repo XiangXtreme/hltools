@@ -124,6 +124,25 @@ namespace csg
             return result;
         }
 
+        int fragment_mask_common_count(const fragment_plane_mask &a,
+                                       const fragment_plane_mask &b)
+        {
+            const size_t words = std::min(a.size(), b.size());
+            int count = 0;
+            for (size_t i = 0; i < words; i++)
+                count += fragment_mask_popcount(a[i] & b[i]);
+            return count;
+        }
+
+        void fragment_mask_intersection_into(fragment_plane_mask &result,
+                                              const fragment_plane_mask &a,
+                                              const fragment_plane_mask &b)
+        {
+            const size_t words = std::min(a.size(), b.size());
+            result.resize(words);
+            for (size_t i = 0; i < words; i++) result[i] = a[i] & b[i];
+        }
+
         void fragment_normalize_masks(std::vector<fragment> &fragments, size_t plane_count)
         {
             const size_t words = (plane_count + 63) / 64;
@@ -663,14 +682,12 @@ namespace csg
                     for (size_t j = 0; j < input.vertices.size(); j++)
                         if (side[j] > fragment_epsilon)
                         {
-                            const auto common_mask = fragment_mask_intersection(
-                                input.incidence[i], input.incidence[j]);
-                            int common = 0;
-                            for (uint64_t word : common_mask) common += fragment_mask_popcount(word);
-                            if (common < 2) continue;
+                            if (fragment_mask_common_count(input.incidence[i], input.incidence[j]) < 2)
+                                continue;
                             vec_t t = side[i] / (side[i] - side[j]);
                             cuts.push_back(input.vertices[i] + (input.vertices[j] - input.vertices[i]) * t);
-                            auto inc = common_mask;
+                            fragment_plane_mask inc;
+                            fragment_mask_intersection_into(inc, input.incidence[i], input.incidence[j]);
                             fragment_mask_set(inc, pid);
                             cut_incidence.push_back(std::move(inc));
                         }
