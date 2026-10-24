@@ -80,3 +80,16 @@ bin/hltools.exe compile -threads 2 -cliptype pyboundary build/tmp/untitledx_pybo
 - 将 boundary poly 顶点 incidence 从 `std::set<int>` 改为保持排序的 `vector<int>`，插入、包含、并集和交集都保持原有集合语义。
 - `untitledx` 的 direct nodes 保持 hull1/hull3 `2406/2501`，最终 BSP clipnodes 保持 `4907`；完整编译两次约 `11.8s/12.0s`。
 - 与参考 BSP 随机比较 300,000 点，hull1/2/3 判定差异均为 `0`；`cliptype_sl` 回归生成 hull1/hull3 各 `25` nodes；`ctest` 193/193 通过。
+
+## 2026-10-24 增量 edge topology 实验
+
+- 实验实现让 `clip_boundary_poly()` 从输入 fragment 继承未切断的 hull edges，只为新切割面生成边环，并在顶点合并/压缩后做索引重映射。
+- 为避免闭合阶段的数值拓扑漂移，closure 仍使用原有 hull-edge 重建；增量路径只覆盖 source subtraction 和 fragment split。曾加入面环完整性检查，随后改为 `3V-6` 最小边数快速判定。
+- 在 `untitledx` 上，增量版本与当前参考 BSP 随机 300,000 点的 hull1/2/3 判定均为 `0` 差异，`cliptype_sl` 仍为 hull1/hull3 各 `25` nodes。
+- 但同机基线 CSG 约 `8.8s`，增量版本约 `10.7～14.6s`；cut-face 环生成、边集合映射和增量拓扑校验的开销超过了省下的 hull-edge 重建时间。增量源码已撤回，当前正式实现保持基线版本。
+- 结论：仅维护 fragment edge topology 不是当前机器上的有效算法级取舍；后续应优先针对 source-plane 顶点分类（约 1,000 万次检查）做批量或缓存化，而不是继续堆叠边拓扑修补。
+
+## 2026-10-24 source-plane side cache
+
+- `boundary_outside_parts()` 现在只计算一次当前 fragment 对 source plane 的 signed distances，并把该数组传给正向/反向裁剪；`clip_boundary_poly()` 在有缓存时跳过重复点积，保持原有 EPS、交边筛选和顶点顺序。
+- `untitledx` CSG 同机实测约 `8.7s`，相比约 `8.8s` 基线只有小幅收益；composition terms 和 direct nodes 保持 `250`、hull1/hull3 `2406/2501`。这是低风险的局部优化，后续仍需通过完整编译和随机判定验证。

@@ -1224,18 +1224,35 @@ namespace csg
 
         std::unique_ptr<boundary_poly> clip_boundary_poly(const boundary_poly &input,
                                                            const direct_clip::plane &plane,
-                                                           int plane_id)
+                                                           int plane_id,
+                                                           const std::vector<vec_t> *precomputed_side = nullptr)
         {
             if (input.vertices.empty()) return nullptr;
-            std::vector<vec_t> side(input.vertices.size());
+            std::vector<vec_t> computed_side;
+            const std::vector<vec_t> *side_values = precomputed_side &&
+                precomputed_side->size() == input.vertices.size() ? precomputed_side : nullptr;
             vec_t minv = std::numeric_limits<vec_t>::max();
             vec_t maxv = -std::numeric_limits<vec_t>::max();
-            for (size_t i = 0; i < input.vertices.size(); i++)
+            if (side_values)
             {
-                side[i] = math::dot(input.vertices[i], plane.normal) - plane.dist;
-                minv = std::min(minv, side[i]);
-                maxv = std::max(maxv, side[i]);
+                for (const vec_t value : *side_values)
+                {
+                    minv = std::min(minv, value);
+                    maxv = std::max(maxv, value);
+                }
             }
+            else
+            {
+                computed_side.resize(input.vertices.size());
+                side_values = &computed_side;
+                for (size_t i = 0; i < input.vertices.size(); i++)
+                {
+                    computed_side[i] = math::dot(input.vertices[i], plane.normal) - plane.dist;
+                    minv = std::min(minv, computed_side[i]);
+                    maxv = std::max(maxv, computed_side[i]);
+                }
+            }
+            const auto &side = *side_values;
             if (maxv <= boundary_clip_epsilon)
             {
                 auto out = std::make_unique<boundary_poly>(input);
@@ -1596,11 +1613,13 @@ namespace csg
             std::unique_ptr<boundary_poly> remaining = std::make_unique<boundary_poly>(std::move(volume));
             for (size_t i = 0; i < planes.size() && remaining; i++)
             {
+                std::vector<vec_t> side(remaining->vertices.size());
                 vec_t minv = std::numeric_limits<vec_t>::max();
                 vec_t maxv = -std::numeric_limits<vec_t>::max();
-                for (const auto &v : remaining->vertices)
+                for (size_t vertex = 0; vertex < remaining->vertices.size(); vertex++)
                 {
-                    vec_t x = math::dot(v, planes[i].normal) - planes[i].dist;
+                    const vec_t x = math::dot(remaining->vertices[vertex], planes[i].normal) - planes[i].dist;
+                    side[vertex] = x;
                     minv = std::min(minv, x);
                     maxv = std::max(maxv, x);
                 }
@@ -1613,10 +1632,13 @@ namespace csg
                 auto outside_plane = planes[i];
                 outside_plane.normal = -outside_plane.normal;
                 outside_plane.dist = -outside_plane.dist;
+                std::vector<vec_t> outside_side(side.size());
+                for (size_t vertex = 0; vertex < side.size(); vertex++)
+                    outside_side[vertex] = -side[vertex];
                 auto front = clip_boundary_poly(*remaining, outside_plane,
-                                                 plane_base + (int)i);
+                                                 plane_base + (int)i, &outside_side);
                 if (front) outside.push_back(std::move(front));
-                remaining = clip_boundary_poly(*remaining, planes[i], plane_base + (int)i);
+                remaining = clip_boundary_poly(*remaining, planes[i], plane_base + (int)i, &side);
             }
             return outside;
         }
