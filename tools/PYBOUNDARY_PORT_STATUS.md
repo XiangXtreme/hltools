@@ -74,3 +74,9 @@ bin/hltools.exe compile -threads 2 -cliptype pyboundary build/tmp/untitledx_pybo
 验证副本：`build/tmp/untitledx_pyboundary.bsp`；上一版纯压缩副本：`build/tmp/untitledx_pyboundary_compacted.bsp`。
 
 最新验证：`untitledx` 的 CSG 阶段约 15～16 秒，完整 CSG/BSP/VIS/RAD 编译耗时约 19.3 秒；最终仍为 7,981 个 clipnodes（32,767 上限的 24.4%）、hull1/hull3 为 4,014/3,967，几何统计与前一版一致。193/193 项测试通过。
+
+## 2026-10-24 vector incidence 优化
+
+- 将 boundary poly 顶点 incidence 从 `std::set<int>` 改为保持排序的 `vector<int>`，插入、包含、并集和交集都保持原有集合语义。
+- `untitledx` 的 direct nodes 保持 hull1/hull3 `2406/2501`，最终 BSP clipnodes 保持 `4907`；完整编译两次约 `11.8s/12.0s`。
+- 与参考 BSP 随机比较 300,000 点，hull1/2/3 判定差异均为 `0`；`cliptype_sl` 回归生成 hull1/hull3 各 `25` nodes；`ctest` 193/193 通过。

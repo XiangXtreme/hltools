@@ -169,8 +169,9 @@ namespace csg
         // edge rule is used by brushbsp.py when a splitter cuts a fragment.
         struct boundary_poly
         {
+            using incidence_list = std::vector<int>;
             point_list vertices;
-            std::vector<std::set<int>> incidence;
+            std::vector<incidence_list> incidence;
             std::shared_ptr<std::map<int, direct_clip::plane>> constraints;
             std::shared_ptr<boundary_plane_ranges> boundary_ranges;
             mutable std::shared_ptr<std::set<boundary_edge_key>> hull_edges;
@@ -182,6 +183,37 @@ namespace csg
             std::vector<direct_clip::plane> planes;
             math::bounding_box bounds;
         };
+
+        void boundary_incidence_add(boundary_poly::incidence_list &ids, int plane)
+        {
+            const auto found = std::lower_bound(ids.begin(), ids.end(), plane);
+            if (found == ids.end() || *found != plane) ids.insert(found, plane);
+        }
+
+        bool boundary_incidence_contains(const boundary_poly::incidence_list &ids, int plane)
+        {
+            return std::binary_search(ids.begin(), ids.end(), plane);
+        }
+
+        void boundary_incidence_union(boundary_poly::incidence_list &destination,
+                                      const boundary_poly::incidence_list &source)
+        {
+            boundary_poly::incidence_list merged;
+            merged.reserve(destination.size() + source.size());
+            std::set_union(destination.begin(), destination.end(),
+                           source.begin(), source.end(), std::back_inserter(merged));
+            destination = std::move(merged);
+        }
+
+        void boundary_incidence_intersection(boundary_poly::incidence_list &destination,
+                                             const boundary_poly::incidence_list &a,
+                                             const boundary_poly::incidence_list &b)
+        {
+            destination.clear();
+            destination.reserve(std::min(a.size(), b.size()));
+            std::set_intersection(a.begin(), a.end(), b.begin(), b.end(),
+                                  std::back_inserter(destination));
+        }
 
         // Static broad-phase index for the closed brush assembly.  The
         // subtraction order remains the original source order, so this only
@@ -903,7 +935,7 @@ namespace csg
         {
             if (poly.vertices.size() < 5 || !poly.constraints || poly.constraints->empty()) return;
             point_list vertices;
-            std::vector<std::set<int>> incidence;
+            std::vector<boundary_poly::incidence_list> incidence;
             vertices.reserve(poly.vertices.size());
             incidence.reserve(poly.incidence.size());
             for (size_t i = 0; i < poly.vertices.size(); i++)
@@ -949,10 +981,10 @@ namespace csg
         }
 
         void merge_boundary_vertices(point_list &vertices,
-                                      std::vector<std::set<int>> &incidence)
+                                      std::vector<boundary_poly::incidence_list> &incidence)
         {
             point_list merged;
-            std::vector<std::set<int>> merged_incidence;
+            std::vector<boundary_poly::incidence_list> merged_incidence;
             // Match the Python polyhedron deduplication scale.  A millimeter
             // snap merges neighboring terrain vertices and destroys edge
             // incidence, which is fatal to the adaptive arrangement.
@@ -974,7 +1006,7 @@ namespace csg
                     merged_incidence.push_back(incidence[i]);
                 }
                 else
-                    merged_incidence[found].insert(incidence[i].begin(), incidence[i].end());
+                    boundary_incidence_union(merged_incidence[found], incidence[i]);
             }
             vertices = std::move(merged);
             incidence = std::move(merged_incidence);
@@ -1004,18 +1036,19 @@ namespace csg
             for (size_t i = 0; i < out.vertices.size(); i++)
             {
                 const auto &v = out.vertices[i];
-                if (std::fabs(v.x - hi.x) <= boundary_clip_epsilon) out.incidence[i].insert(boundary_box_plane_base + 0);
-                if (std::fabs(v.x - lo.x) <= boundary_clip_epsilon) out.incidence[i].insert(boundary_box_plane_base + 1);
-                if (std::fabs(v.y - hi.y) <= boundary_clip_epsilon) out.incidence[i].insert(boundary_box_plane_base + 2);
-                if (std::fabs(v.y - lo.y) <= boundary_clip_epsilon) out.incidence[i].insert(boundary_box_plane_base + 3);
-                if (std::fabs(v.z - hi.z) <= boundary_clip_epsilon) out.incidence[i].insert(boundary_box_plane_base + 4);
-                if (std::fabs(v.z - lo.z) <= boundary_clip_epsilon) out.incidence[i].insert(boundary_box_plane_base + 5);
+                if (std::fabs(v.x - hi.x) <= boundary_clip_epsilon) boundary_incidence_add(out.incidence[i], boundary_box_plane_base + 0);
+                if (std::fabs(v.x - lo.x) <= boundary_clip_epsilon) boundary_incidence_add(out.incidence[i], boundary_box_plane_base + 1);
+                if (std::fabs(v.y - hi.y) <= boundary_clip_epsilon) boundary_incidence_add(out.incidence[i], boundary_box_plane_base + 2);
+                if (std::fabs(v.y - lo.y) <= boundary_clip_epsilon) boundary_incidence_add(out.incidence[i], boundary_box_plane_base + 3);
+                if (std::fabs(v.z - hi.z) <= boundary_clip_epsilon) boundary_incidence_add(out.incidence[i], boundary_box_plane_base + 4);
+                if (std::fabs(v.z - lo.z) <= boundary_clip_epsilon) boundary_incidence_add(out.incidence[i], boundary_box_plane_base + 5);
             }
             rebuild_boundary_bounds(out);
             return out;
         }
 
-        bool boundary_edge(const std::set<int> &a, const std::set<int> &b)
+        bool boundary_edge(const boundary_poly::incidence_list &a,
+                           const boundary_poly::incidence_list &b)
         {
             int common = 0;
             auto i = a.begin();
@@ -1212,14 +1245,14 @@ namespace csg
                 (*out->constraints)[plane_id] = plane;
                 for (size_t i = 0; i < out->vertices.size(); i++)
                     if (std::fabs(side[i]) <= boundary_clip_epsilon)
-                        out->incidence[i].insert(plane_id);
+                        boundary_incidence_add(out->incidence[i], plane_id);
                 return out;
             }
             if (minv >= -boundary_clip_epsilon)
                 return nullptr;
 
             point_list vertices;
-            std::vector<std::set<int>> incidence;
+            std::vector<boundary_poly::incidence_list> incidence;
             auto constraints = input.constraints;
             if (!constraints) constraints = std::make_shared<std::map<int, direct_clip::plane>>();
             if (!constraints->count(plane_id))
@@ -1232,7 +1265,8 @@ namespace csg
                 {
                     vertices.push_back(input.vertices[i]);
                     auto inc = input.incidence[i];
-                    if (std::fabs(side[i]) <= boundary_clip_epsilon) inc.insert(plane_id);
+                    if (std::fabs(side[i]) <= boundary_clip_epsilon)
+                        boundary_incidence_add(inc, plane_id);
                     incidence.push_back(std::move(inc));
                 }
             }
@@ -1246,11 +1280,9 @@ namespace csg
                     if (!hull_edges.count({i, j})) continue;
                     vec_t t = side[i] / (side[i] - side[j]);
                     vertices.push_back(input.vertices[i] + (input.vertices[j] - input.vertices[i]) * t);
-                    std::set<int> inc;
-                    std::set_intersection(input.incidence[i].begin(), input.incidence[i].end(),
-                                          input.incidence[j].begin(), input.incidence[j].end(),
-                                          std::inserter(inc, inc.begin()));
-                    inc.insert(plane_id);
+                    boundary_poly::incidence_list inc;
+                    boundary_incidence_intersection(inc, input.incidence[i], input.incidence[j]);
+                    boundary_incidence_add(inc, plane_id);
                     incidence.push_back(std::move(inc));
                     cut_count++;
                 }
@@ -1268,11 +1300,9 @@ namespace csg
                         if (!boundary_geometric_edge(input.vertices, i, j)) continue;
                         vec_t t = side[i] / (side[i] - side[j]);
                         vertices.push_back(input.vertices[i] + (input.vertices[j] - input.vertices[i]) * t);
-                        std::set<int> inc;
-                        std::set_intersection(input.incidence[i].begin(), input.incidence[i].end(),
-                                              input.incidence[j].begin(), input.incidence[j].end(),
-                                              std::inserter(inc, inc.begin()));
-                        inc.insert(plane_id);
+                        boundary_poly::incidence_list inc;
+                        boundary_incidence_intersection(inc, input.incidence[i], input.incidence[j]);
+                        boundary_incidence_add(inc, plane_id);
                         incidence.push_back(std::move(inc));
                         cut_count++;
                     }
@@ -1291,11 +1321,9 @@ namespace csg
                             continue;
                         vec_t t = side[i] / (side[i] - side[j]);
                         vertices.push_back(input.vertices[i] + (input.vertices[j] - input.vertices[i]) * t);
-                        std::set<int> inc;
-                        std::set_intersection(input.incidence[i].begin(), input.incidence[i].end(),
-                                              input.incidence[j].begin(), input.incidence[j].end(),
-                                              std::inserter(inc, inc.begin()));
-                        inc.insert(plane_id);
+                        boundary_poly::incidence_list inc;
+                        boundary_incidence_intersection(inc, input.incidence[i], input.incidence[j]);
+                        boundary_incidence_add(inc, plane_id);
                         incidence.push_back(std::move(inc));
                         cut_count++;
                     }
@@ -1330,7 +1358,8 @@ namespace csg
             {
                 std::vector<math::vec3v> points;
                 for (size_t i = 0; i < poly.vertices.size(); i++)
-                    if (poly.incidence[i].count(pid)) points.push_back(poly.vertices[i]);
+                    if (boundary_incidence_contains(poly.incidence[i], pid))
+                        points.push_back(poly.vertices[i]);
                 if (points.size() < 3) continue;
                 math::vec3v normal;
                 bool have_normal = false;
@@ -1497,7 +1526,8 @@ namespace csg
                     (*out.constraints)[boundary_source_plane_base + source_index * 1024 + (int)f] =
                         direct_clip::plane{p.normal, p.dist};
                     if (std::fabs(math::dot(out.vertices[i], p.normal) - p.dist) <= (vec_t)1e-5)
-                        out.incidence[i].insert(boundary_source_plane_base + source_index * 1024 + (int)f);
+                        boundary_incidence_add(out.incidence[i],
+                                               boundary_source_plane_base + source_index * 1024 + (int)f);
                 }
             rebuild_boundary_bounds(out);
             return out;
