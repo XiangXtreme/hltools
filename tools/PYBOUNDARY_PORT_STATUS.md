@@ -116,4 +116,5 @@ bin/hltools.exe compile -threads 2 -cliptype pyboundary build/tmp/untitledx_pybo
 - 上述 direct fragment 版本是穿墙诊断实验，不等于 `untitledx_pyboundary.bsp` 的参考形态；它会把同一地形拆成 7553/7586 个节点，体感上偏向 simple。
 - 正式 `pyboundary` 恢复为外部表面提取后执行 `prepare_boundary_composition()`，再用 whole-entity terms 扩张并生成 fragment BSP。
 - `untitledx` 当前恢复为 hull1/hull3 `2406/2501`、总 clipnodes `4907`，与参考 BSP 的 300,000 个随机 hull1 判定差异为 `0`。
-- 轴向负法向规范化和 direct tree 的节点安装修复仍保留，用于避免恢复参考几何后再次出现整面墙穿越。
+- direct tree 安装保留原始平面方向和子节点顺序；这与参考 BSP 的 clipnode 编码一致，不能再对轴向平面做正轴规范化。
+- 最新 C++ 输出与参考 `untitledx_pyboundary.bsp` 的 planes、clipnodes、models、visibility、lighting 等 BSP lump 均逐字节一致，只有实体文本中的编译信息不同。
