@@ -1509,17 +1509,29 @@ namespace csg
         bool boundary_supporting_plane(const boundary_poly &poly,
                                        const direct_clip::plane &plane)
         {
-            std::vector<math::vec3v> face;
+            math::vec3v first{};
+            bool have_first = false;
             for (const auto &v : poly.vertices)
                 if (std::fabs(math::dot(v, plane.normal) - plane.dist) <= (vec_t)1e-5)
-                    face.push_back(v);
-            if (face.size() < 3) return false;
-            for (size_t i = 1; i + 1 < face.size(); i++)
-            {
-                math::vec3v cross;
-                math::cross(face[i] - face[0], face[i + 1] - face[0], cross);
-                if (math::length(cross) > (vec_t)1e-8) return true;
-            }
+                if (!have_first)
+                {
+                    first = v;
+                    have_first = true;
+                }
+                else
+                {
+                    math::vec3v edge = v - first;
+                    if (math::length(edge) <= (vec_t)1e-8) continue;
+                    for (const auto &other : poly.vertices)
+                    {
+                        if (std::fabs(math::dot(other, plane.normal) - plane.dist) > (vec_t)1e-5)
+                            continue;
+                        math::vec3v cross;
+                        math::cross(edge, other - first, cross);
+                        if (math::length(cross) > (vec_t)1e-8) return true;
+                    }
+                    break;
+                }
             return false;
         }
 
