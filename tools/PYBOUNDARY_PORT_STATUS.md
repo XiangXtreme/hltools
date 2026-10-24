@@ -59,6 +59,12 @@ bin/hltools.exe compile -threads 2 -cliptype pyboundary build/tmp/untitledx_pybo
 - 与上一份参考 BSP 随机抽取 300,000 个点比较，hull1、hull2、hull3 判定差异均为 `0`；`cliptype_sl` 回归也正常生成 hull1/hull3 各 `25` nodes。
 - 上限 `48` 的实验反而生成 `2764/2486` direct nodes、`5250` final clipnodes，因此不采用。候选上限是当前算法级的可调参数：`12` 偏向节点数和速度，继续降低可能增加随机拆分波动。
 
+## 算法级实验记录
+
+- closure 前缀缓存实验未采用：虽然 direct nodes 不变，但 `std::map/shared_ptr` 的缓存管理使完整编译从约 `15.9s` 退化到 `19.1s`。
+- composition pending 窗口的 `std::async` 预取实验未采用：几何结果不变，但由于 pending 顺序导致部分预取浪费，总耗时约 `16.2s`，没有超过当前基线。
+- 当前保留的算法级取舍仍是 splitter 候选上限 `12`；若继续追求小秒级，需要改成共享裁剪 DAG 或固定线程池批处理，而不是继续增加临时缓存。
+
 验证副本：`build/tmp/untitledx_pyboundary.bsp`；上一版纯压缩副本：`build/tmp/untitledx_pyboundary_compacted.bsp`。
 
 最新验证：`untitledx` 的 CSG 阶段约 15～16 秒，完整 CSG/BSP/VIS/RAD 编译耗时约 19.3 秒；最终仍为 7,981 个 clipnodes（32,767 上限的 24.4%）、hull1/hull3 为 4,014/3,967，几何统计与前一版一致。193/193 项测试通过。
