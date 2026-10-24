@@ -130,6 +130,8 @@ namespace csg
             std::vector<int> members;
         };
 
+        using boundary_edge_key = std::pair<size_t, size_t>;
+
         // Convex polyhedron used by the boundary-normalized composition.
         // Incidence records are deliberately retained: the same two-plane
         // edge rule is used by brushbsp.py when a splitter cuts a fragment.
@@ -139,6 +141,7 @@ namespace csg
             std::vector<std::set<int>> incidence;
             std::shared_ptr<std::map<int, direct_clip::plane>> constraints;
             std::shared_ptr<boundary_plane_ranges> boundary_ranges;
+            mutable std::shared_ptr<std::set<boundary_edge_key>> hull_edges;
             math::bounding_box bounds;
         };
 
@@ -1014,8 +1017,6 @@ namespace csg
             return false;
         }
 
-        using boundary_edge_key = std::pair<size_t, size_t>;
-
         void boundary_add_edge(std::set<boundary_edge_key> &edges, size_t a, size_t b)
         {
             if (a == b) return;
@@ -1023,8 +1024,9 @@ namespace csg
             edges.insert({a, b});
         }
 
-        std::set<boundary_edge_key> boundary_hull_edges(const boundary_poly &poly)
+        const std::set<boundary_edge_key> &boundary_hull_edges(const boundary_poly &poly)
         {
+            if (poly.hull_edges) return *poly.hull_edges;
             std::set<boundary_edge_key> edges;
             std::map<int, std::vector<size_t>> faces;
             for (size_t i = 0; i < poly.incidence.size(); i++)
@@ -1130,7 +1132,8 @@ namespace csg
                     boundary_add_edge(edges, hull[i].index, hull[(i + 1) % hull.size()].index);
             }
 
-            return edges;
+            poly.hull_edges = std::make_shared<std::set<boundary_edge_key>>(std::move(edges));
+            return *poly.hull_edges;
         }
 
         std::unique_ptr<boundary_poly> clip_boundary_poly(const boundary_poly &input,
@@ -1169,7 +1172,7 @@ namespace csg
             if (!constraints->count(plane_id))
                 constraints = std::make_shared<std::map<int, direct_clip::plane>>(*constraints);
             (*constraints)[plane_id] = plane;
-            const auto hull_edges = boundary_hull_edges(input);
+            const auto &hull_edges = boundary_hull_edges(input);
             for (size_t i = 0; i < input.vertices.size(); i++)
             {
                 if (side[i] <= boundary_clip_epsilon)

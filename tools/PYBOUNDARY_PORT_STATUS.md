@@ -44,6 +44,7 @@ bin/hltools.exe compile -threads 2 -cliptype pyboundary build/tmp/untitledx_pybo
 - `untitledx_pyboundary.map` 的直接树先从 `4014/3967` 压缩到约 `2541/2405`；随后 fragment incidence/sides/used 改为位集，当前实测 hull1/hull3 为 `2682/2454`，最终 BSP clipnodes 为 `5136`。随机 10,000 点对两个版本的 hull1/2/3 判定均为 0 差异。
 - 位集版本完整 `compile -threads 2 -cliptype pyboundary` 约 17.4 秒（CSG 单独运行约 14～17 秒，受机器负载影响）；`ctest` 193/193 通过。
 - 位集版本的节点数略高于纯压缩版本，后续仍需优化 splitter 评分，使节点数和生成时间同时下降。
+- boundary poly 现在缓存自身的 hull-edge 拓扑；同一片段的正反裁剪共享这份缓存。`untitledx` CSG 实测降至约 `12.8s`，完整编译约 `16.1s`，clipnodes 仍为 `5136`，随机 hull 判定仍为 0 差异。
 
 验证副本：`build/tmp/untitledx_pyboundary.bsp`；上一版纯压缩副本：`build/tmp/untitledx_pyboundary_compacted.bsp`。
 
