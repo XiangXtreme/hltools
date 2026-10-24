@@ -825,7 +825,6 @@ namespace bsp
         // now go back and fill things in
         g_fill.valid++;
         recursive_fill_outside(state, state.outside_node.portals->nodes[s], true);
-        capture_collision_fill(state, n);
 
         // remove faces and nodes from filled in leafs
         g_fill.c_falsenodes = 0;

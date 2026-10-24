@@ -282,7 +282,6 @@ target_link_libraries(brush_geometry_dump PRIVATE hltools_csg)
 
 # bsp: solid tree build, portals, fill, tjunc, edges, and bsp writing
 add_library(hltools_bsp STATIC
-    src/bsp/clip_trim.cpp
     src/bsp/brush.cpp
     src/bsp/face.cpp
     src/bsp/inputs.cpp

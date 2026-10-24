@@ -102,7 +102,6 @@ namespace bsp
             state.hull_size[i][0] = {(vec_t)(float)v[0], (vec_t)(float)v[1], (vec_t)(float)v[2]};
             state.hull_size[i][1] = {(vec_t)(float)v[3], (vec_t)(float)v[4], (vec_t)(float)v[5]};
         }
-        parse_clip_trim(state, f);
     }
 
     void load_hull_sizes(bsp_state &state)

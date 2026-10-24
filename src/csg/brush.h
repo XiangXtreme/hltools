@@ -87,9 +87,6 @@ namespace csg
         precise,
         legacy,
         legacytrim,
-        exactunion,
-        pyexact,
-        pyboundary,
     };
 
     struct brush_build_options
@@ -121,13 +118,10 @@ namespace csg
         int clipnode_detail_level = 0;
         int coplanar_priority = 0;
         brush_hull hulls[num_hulls];
-        // Exact box expansions are kept separate from the legacy plane store:
-        // inserting them there would change subsequent legacy plane merging.
-        std::vector<math::plane> trim_planes[num_hulls];
-        math::bounding_box trim_bounds[num_hulls];
-        bool exact_union = false;
-        bool pyexact = false;
-        bool pyboundary = false;
+        // The public legacytrim name now selects the Python-style continuous
+        // exterior surface tree.  Keep the implementation marker separate
+        // from the public enum so local entity routing remains explicit.
+        bool surface_legacytrim = false;
         bool skipped = false;
     };
 

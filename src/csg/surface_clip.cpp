@@ -486,7 +486,7 @@ namespace csg
             std::vector<const built_brush *> brushes;
             for (const auto &brush : entity.brushes)
                 if (brush.contents == content::solid && !brush.hulls[0].faces.empty()
-                    && (!boundary_only || brush.pyboundary))
+                    && (!boundary_only || brush.surface_legacytrim))
                     brushes.push_back(&brush);
             if (brushes.empty()) return {};
 
@@ -548,7 +548,7 @@ namespace csg
                     }
                 }
             }
-            logging::info("pyexact: exterior input %zu faces, %zu fragments, %zu triangles\n",
+            logging::info("legacytrim: exterior input %zu faces, %zu fragments, %zu triangles\n",
                           input_faces, exterior_fragments, triangles.size());
             return triangles;
         }
@@ -767,7 +767,7 @@ namespace csg
         {
             if (fragments.empty()) return -1;
             if (depth > 4096)
-                err::fatal("pyexact: fragment BSP depth exceeded");
+                err::fatal("legacytrim: fragment BSP depth exceeded");
             for (const auto &f : fragments)
                 if (fragment_mask_contains(f.used, f.sides)) return -2;
 
@@ -851,7 +851,7 @@ namespace csg
             }
             int index = (int)nodes.size();
             if (nodes.size() >= 500000)
-                err::fatal("pyexact: fragment BSP exceeded the internal node budget (fragments=%zu, depth=%d)", fragments.size(), depth);
+                err::fatal("legacytrim: fragment BSP exceeded the internal node budget (fragments=%zu, depth=%d)", fragments.size(), depth);
             nodes.push_back({best, -1, -1});
             nodes[(size_t)index].front = build_tree(std::move(front), planes, nodes, scratch, depth + 1);
             nodes[(size_t)index].back = build_tree(std::move(back), planes, nodes, scratch, depth + 1);
@@ -877,11 +877,11 @@ namespace csg
             std::function<int(int)> visit = [&](int index) -> int {
                 if (index < 0) return index;
                 if ((size_t)index >= tree.nodes.size())
-                    err::fatal("pyboundary: invalid fragment tree child %d", index);
+                    err::fatal("legacytrim: invalid fragment tree child %d", index);
                 auto known = memo.find(index);
                 if (known != memo.end()) return known->second;
                 if (!visiting.insert(index).second)
-                    err::fatal("pyboundary: cyclic fragment tree at node %d", index);
+                    err::fatal("legacytrim: cyclic fragment tree at node %d", index);
                 const auto &node = tree.nodes[(size_t)index];
                 const int front = visit(node.front);
                 const int back = visit(node.back);
@@ -916,7 +916,7 @@ namespace csg
             const size_t before = tree.nodes.size();
             tree.nodes = std::move(compacted);
             tree.head = remap(root);
-            logging::info("pyboundary: compacted direct tree %zu -> %zu nodes\n",
+            logging::info("legacytrim: compacted direct tree %zu -> %zu nodes\n",
                           before, tree.nodes.size());
         }
 
@@ -1512,7 +1512,7 @@ namespace csg
                     p.dist += boundary_roof_lift * std::max(p.normal.z, (vec_t)0);
                     result.push_back(p);
                 }
-            logging::info("pyboundary: %zu boundary planes, removed %zu micro seams\n",
+            logging::info("legacytrim: %zu boundary planes, removed %zu micro seams\n",
                           result.size(), planes.size() - result.size());
             return result;
         }
@@ -1668,7 +1668,7 @@ namespace csg
                 }
                 remaining = std::move(next);
                 if (remaining.size() > 10000)
-                    err::fatal("pyboundary: source subtraction exceeded the piece budget");
+                    err::fatal("legacytrim: source subtraction exceeded the piece budget");
             }
             return remaining;
         }
@@ -1685,7 +1685,7 @@ namespace csg
                 auto clipped = clip_boundary_poly(*result, planes[(size_t)member], member);
                 if (!clipped)
                 {
-                    logging::info("pyboundary: closure clip empty member=%d step=%zu/%zu vertices=%zu\n",
+                    logging::info("legacytrim: closure clip empty member=%d step=%zu/%zu vertices=%zu\n",
                                   member, step, members.size(), result->vertices.size());
                     return nullptr;
                 }
@@ -1814,7 +1814,7 @@ namespace csg
                 pending.pop_back();
                 visited++;
                 if (visited > 20000)
-                    err::fatal("pyboundary: adaptive composition exceeded the piece budget");
+                    err::fatal("legacytrim: adaptive composition exceeded the piece budget");
                 if (!piece.boundary_ranges)
                     piece.boundary_ranges = std::make_shared<boundary_plane_ranges>(
                         boundary_plane_ranges_for(piece, planes));
@@ -1830,7 +1830,7 @@ namespace csg
                 if (cached == cache.end())
                 {
                     auto closure = boundary_closure(bounds, planes, members);
-                    if (!closure) err::fatal("pyboundary: boundary closure lost a source piece");
+                    if (!closure) err::fatal("legacytrim: boundary closure lost a source piece");
                     auto outside = boundary_outside_fragments(*closure, allowed, allowed_index);
                     vec_t excess = 0;
                     math::vec3v witness{};
@@ -1911,12 +1911,12 @@ namespace csg
                     split = true;
                 }
                 if (!split)
-                    err::fatal("pyboundary: adaptive split could not separate empty space (visited=%d members=%zu excess=%g piecevol=%g candidates=%zu vertices=%zu pid=%d range=%g..%g)",
+                    err::fatal("legacytrim: adaptive split could not separate empty space (visited=%d members=%zu excess=%g piecevol=%g candidates=%zu vertices=%zu pid=%d range=%g..%g)",
                                visited, members.size(), (double)excess, (double)piece_volume,
                                candidates.size(), piece.vertices.size(), last_candidate,
                                (double)last_min, (double)last_max);
                 if (visited % 100 == 0)
-                    logging::info("pyboundary: composed %d pieces, %zu pending, %zu terms\n",
+                    logging::info("legacytrim: composed %d pieces, %zu pending, %zu terms\n",
                                   visited, pending.size(), accepted.size());
             }
 
@@ -1934,7 +1934,7 @@ namespace csg
                     if (boundary_subset(term.members, entry.first)) { covered = true; break; }
                 if (!covered) terms.push_back({entry.first});
             }
-            logging::info("pyboundary: %zu whole-entity terms after absorption (%d splits)\n",
+            logging::info("legacytrim: %zu whole-entity terms after absorption (%d splits)\n",
                           terms.size(), splits);
             return terms;
         }
@@ -2046,7 +2046,7 @@ namespace csg
             }
             if (fragments.empty()) return tree;
             fragment_normalize_masks(fragments, output_planes.values.size());
-            logging::info("pyboundary: %zu terms, %zu active planes, hull half %g %g %g\n",
+            logging::info("legacytrim: %zu terms, %zu active planes, hull half %g %g %g\n",
                           fragments.size(), output_planes.values.size(),
                           (double)half.x, (double)half.y, (double)half.z);
             build_tree_scratch build_scratch;
@@ -2090,7 +2090,7 @@ namespace csg
                 fragments.push_back(make_fragment(planes, tri, half));
             if (fragments.empty()) return tree;
             fragment_normalize_masks(fragments, planes.values.size());
-            logging::info("pyexact: fragment input %zu triangles, %zu planes\n",
+            logging::info("legacytrim: fragment input %zu triangles, %zu planes\n",
                           triangles.size(), planes.values.size());
             build_tree_scratch build_scratch;
             tree.head = build_tree(std::move(fragments), planes, tree.nodes, build_scratch);
@@ -2133,31 +2133,29 @@ namespace csg
             // dedicated func_detail/func_wall model, but it cannot replace
             // worldspawn's ordinary collision tree when the world also owns a
             // sky shell (or other enclosing brushes).  The global
-            // -cliptype pyboundary/pyexact option used to install such a tree
+            // -cliptype legacytrim used to install such a tree
             // on model 0 and thereby discarded the world sky collision.  Keep
             // worldspawn on its normal hull path; an explicitly marked detail
             // entity remains eligible for the direct surface replacement.
             out.emplace_back();
             if (entity.entity_num == 0
-                && (options.clip == clip_type::pyboundary
-                    || options.clip == clip_type::pyexact))
+                && options.clip == clip_type::legacytrim)
                 continue;
 
             direct_clip::model &model = out.back();
             bool any = false, all = true;
-            bool boundary_mode = options.clip == clip_type::pyboundary;
-            bool exact_mode = options.clip == clip_type::pyexact;
+            bool boundary_mode = options.clip == clip_type::legacytrim;
             for (const auto &brush : entity.brushes)
             {
                 if (brush.contents == content::origin || brush.contents == content::bounding_box
                     || brush.skipped)
                     continue;
-                if (boundary_mode && brush.pyboundary)
+                if (boundary_mode && brush.surface_legacytrim)
                 {
                     if (brush.contents != content::solid || brush.hulls[0].faces.empty())
                         continue;
                     any = true;
-                    all = all && brush.pyboundary;
+                    all = all && brush.surface_legacytrim;
                     continue;
                 }
                 if (boundary_mode)
@@ -2169,21 +2167,20 @@ namespace csg
                     continue;
                 }
                 any = true;
-                boundary_mode = boundary_mode || brush.pyboundary;
-                exact_mode = exact_mode || brush.pyexact;
-                all = all && (brush.pyboundary || brush.pyexact);
+                boundary_mode = boundary_mode || brush.surface_legacytrim;
+                all = all && brush.surface_legacytrim;
             }
             if (!any || !all) continue;
-            auto triangles = extract_triangles(result, entity, boundary_mode && !exact_mode);
+            auto triangles = extract_triangles(result, entity, boundary_mode);
             if (triangles.empty()) continue;
-            if (boundary_mode && !exact_mode)
+            if (boundary_mode)
             {
                 std::vector<const built_brush *> brushes;
                 for (const auto &brush : entity.brushes)
-                    if (brush.pyboundary && brush.contents == content::solid && !brush.skipped
+                    if (brush.surface_legacytrim && brush.contents == content::solid && !brush.skipped
                         && !brush.hulls[0].faces.empty())
                         brushes.push_back(&brush);
-                // This is the reference path used by untitledx_pyboundary:
+                // This is the reference path used by the Python legacytrim mode:
                 // compose the continuous exterior boundary into whole-entity
                 // convex terms, then expand those terms for each player hull.
                 const auto composition = prepare_boundary_composition(triangles, brushes, result);
@@ -2197,16 +2194,9 @@ namespace csg
                 model.hulls[2] = model.hulls[1];
                 model.hulls[3] = hull3.get();
             }
-            else
-            {
-                model.hulls[1] = build_hull(triangles, options.hull_size[1][1]);
-                model.hulls[2] = model.hulls[1];
-                model.hulls[3] = build_hull(triangles, options.hull_size[3][1]);
-            }
             model.valid = model.hulls[1].valid && model.hulls[3].valid;
             if (model.valid)
-                logging::info("%s: model %zu, %zu exterior triangles, hull1 %zu nodes, hull3 %zu nodes\n",
-                              boundary_mode && !exact_mode ? "pyboundary" : "pyexact",
+                logging::info("legacytrim: model %zu, %zu exterior triangles, hull1 %zu nodes, hull3 %zu nodes\n",
                               out.size() - 1, triangles.size(), model.hulls[1].nodes.size(), model.hulls[3].nodes.size());
         }
         return out;

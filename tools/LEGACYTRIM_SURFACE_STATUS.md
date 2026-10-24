@@ -1,8 +1,12 @@
-# `pyboundary` C++ 移植记录
+# `legacytrim` 连续外表面碰撞记录
+
+> 本文早期记录中的 `pyboundary`、`pyexact` 和 brush trim 名称仅代表历史实验；
+> 当前公开接口只有 `legacytrim`。旧名称已不再接受，下面的旧 BSP 文件名和命令
+> 仅用于追溯历史结果。
 
 ## 目的
 
-`pyboundary` 是独立的 CSG cliptype，用来把闭合 brush 组合按连续外表面生成 GoldSrc 碰撞。已有的 `simple`、`legacy`、`legacytrim`、`exactunion` 和 `pyexact` 路径不改动。
+`legacytrim` 是独立的 CSG cliptype，用来把闭合 brush 组合按连续外表面生成 GoldSrc 碰撞。普通的 `smallest`、`normalized`、`simple`、`precise` 和 `legacy` 路径保持原有语义。
 
 ## 已移植的步骤
 
@@ -12,15 +16,15 @@
 4. 使用 Python `brushbsp.py` 对凸片段进行 fragment BSP 切分，生成 direct clipnode tree。
 5. 通过 `.scl` sidecar 或 compile 的内存 handoff 把 direct tree 安装到 BSP 的 hull 1/2/3。
 
-所有 entity 都使用同一套 whole-entity 自适应凸体组合；不再按 brush 数量切换到逐 brush 的 bounded source-term 近似，也不再进入 `solid_bsp`、`legacytrim` 或 `exactunion`。
+所有 entity 都使用同一套 whole-entity 自适应凸体组合；不再按 brush 数量切换到逐 brush 的 bounded source-term 近似。
 
 ## 验证样例
 
-临时测试输入：`build/tmp/untitledx_pyboundary.map`。
+临时测试输入：`build/tmp/untitledx_legacytrim.map`。
 
 ```powershell
 cmake --build build/vs --config Release --parallel 4 --target hltools
-bin/hltools.exe compile -threads 2 -cliptype pyboundary build/tmp/untitledx_pyboundary.map
+bin/hltools.exe compile -threads 2 -cliptype legacytrim build/tmp/untitledx_legacytrim.map
 ```
 
 当前样例的 C++ CSG 阶段已完成：外部输入 1828 faces、942 triangles；删除 48 个微 seam planes；自适应组合访问约 900 个中间片段，生成 250 个 whole-entity terms；direct hull1/hull3 分别为 4014/3967 nodes。Python 基准为 252 terms，差异来自 C++/Qhull 顶点重建的数值路径，已经不再是 bounded source-term 近似。
@@ -28,10 +32,10 @@ bin/hltools.exe compile -threads 2 -cliptype pyboundary build/tmp/untitledx_pybo
 ## 使用方式
 
 ```text
--cliptype pyboundary <map>
+-cliptype legacytrim <map>
 ```
 
-也可以在 entity 的 `zhlt_cliptype` 中指定 `pyboundary`。原始 MAP 不会被修改。
+也可以在 entity 的 `zhlt_cliptype` 中指定 `legacytrim`。原始 MAP 不会被修改。
 
 ## 后续工作
 

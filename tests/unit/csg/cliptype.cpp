@@ -84,159 +84,6 @@ namespace
 
 suite("unit.csg.cliptype")
 {
-    test("collision union modes transfer exact expansions through memory and disk inputs")
-    {
-        for (const char *mode : {"legacytrim", "exactunion"})
-        {
-            const auto scratch = test_support::scratch_directory((std::string("csg_collision_bridge_") + mode).c_str());
-            const std::string wad_path = (scratch / "textures.wad").string();
-            test_wad::write(wad_path, {"STONE"});
-            csg::csg_options options;
-            options.brush.clip = csg::clip_type::legacy;
-            options.wad.map_path = wad_path;
-            options.wad.wad_textures = true;
-            auto run = [&](const char *mode) {
-                auto map = make_map(wad_path,"func_detail",mode);
-                // Sloped prism, rather than a box with coincident exact/legacy hulls.
-                for (auto &v : map.sides[5].planepts) v.z = 32 + v.x / 2;
-                return csg::run_csg(std::move(map),options);
-            };
-            auto legacy = run("legacy"), trim = run(mode);
-            auto old_data = csg::build_intermediate_data(legacy,options.brush);
-            auto data = csg::build_intermediate_data(trim,options.brush);
-            expect(old_data.planes == data.planes);
-            for (int h = 0; h < csg::num_hulls; h++)
-            {
-                expect(old_data.surfaces[h] == data.surfaces[h]);
-                expect(old_data.brushes[h] == data.brushes[h]);
-            }
-            const auto base = (scratch / "trim").string();
-            require(csg::write_intermediate_files(base,data,trim));
-            bsp::bsp_state disk, memory;
-            disk.base_path = base;
-            bsp::load_hull_sizes(disk);
-            auto map = csg::build_bsp_data(trim,false);
-            memory.map = &map;
-            bsp::bsp_input input;
-            for (int h = 0; h < csg::num_hulls; h++)
-            {
-                input.surfaces[h] = std::move(data.surfaces[h]);
-                input.brushes[h] = std::move(data.brushes[h]);
-            }
-            input.hull_sizes = std::move(data.hull_sizes);
-            input.planes = std::move(data.planes);
-            auto stage_input = input;
-            bsp::set_input_data(memory,input);
-            require(memory.trim_groups.size() == 3);
-            require(disk.trim_groups.size() == 3);
-            for (int h = 0; h < 3; h++)
-            {
-                const auto &a = memory.trim_groups[(size_t)h], &b = disk.trim_groups[(size_t)h];
-                expect(a.model == 0); expect(a.hull == h + 1);
-                require(a.targets.size() == 1); require(a.guards.size() == 1);
-                expect(a.additions.size() == (std::string(mode) == "exactunion" ? 1 : 0));
-                expect(a.additions.size() == b.additions.size());
-                expect(a.complete == (std::string(mode) == "exactunion"));
-                expect(a.complete == b.complete);
-                expect(a.guards[0].bounds.mins == b.guards[0].bounds.mins);
-                require(a.guards[0].planes.size() == b.guards[0].planes.size());
-                for (size_t i = 0; i < a.guards[0].planes.size(); i++)
-                {
-                    expect(a.guards[0].planes[i].normal == b.guards[0].planes[i].normal);
-                    expect(a.guards[0].planes[i].dist == b.guards[0].planes[i].dist);
-                }
-            }
-            auto disk_map = map, memory_map = map;
-            bsp::bsp_options bsp_options;
-            bsp_options.nofill = true;
-            bsp_options.noinsidefill = true;
-            bsp::run_bsp(disk_map,base,bsp_options);
-            bsp::run_bsp(memory_map,(scratch / "memory").string(),bsp_options,std::move(stage_input));
-            require(disk_map.clipnodes.size() == memory_map.clipnodes.size());
-            if (!disk_map.clipnodes.empty())
-                expect(std::memcmp(disk_map.clipnodes.data(),memory_map.clipnodes.data(),
-                    disk_map.clipnodes.size() * sizeof(format::dclipnode_t)) == 0);
-            require(disk_map.planes.size() == memory_map.planes.size());
-            if (!disk_map.planes.empty())
-                expect(std::memcmp(disk_map.planes.data(),memory_map.planes.data(),
-                    disk_map.planes.size() * sizeof(format::dplane_t)) == 0);
-        }
-    }
-
-    test("collision union modes honor clip masks and custom hull brushes")
-    {
-        for (auto mode : {csg::clip_type::legacytrim, csg::clip_type::exactunion})
-        {
-            auto map = make_map("","func_detail","legacytrim");
-            auto brush = map.brushes[0];
-            brush.contents = csg::content::solid;
-            brush.cliphull = 1 << 3;
-            csg::brush_build_options options;
-            options.clip = mode;
-            csg::plane_store planes;
-            auto built = csg::create_brush(map,brush,planes,{},nullptr,options);
-            expect(built.hulls[0].faces.empty());
-            expect(built.trim_planes[1].empty());
-            expect(built.trim_planes[2].empty());
-            expect(!built.trim_planes[3].empty());
-            brush.cliphull = 0;
-            brush.noclip = true;
-            built = csg::create_brush(map,brush,planes,{},nullptr,options);
-            expect(built.trim_planes[3].empty());
-            brush.noclip = false;
-            // An active custom hull uses its own Minkowski expansion, even if the
-            // global clip option requests a union. No box guard is generated for it.
-            csg::hull_shape_library library;
-            library.default_hulls[3].disabled = false;
-            // Empty custom shape intentionally disables collision in that hull.
-            options.hull_shapes = &library;
-            built = csg::create_brush(map,brush,planes,{},nullptr,options);
-            expect(built.trim_planes[3].empty());
-            expect(built.hulls[3].faces.empty());
-            map.brushes[0].contents = csg::content::solid;
-            csg::add_hull_shape(map,1,library);
-            library.default_hulls[3] = library.shapes.back();
-            built = csg::create_brush(map,brush,planes,{},nullptr,options);
-            expect(built.trim_planes[3].empty());
-            expect(!built.hulls[3].faces.empty());
-            options.hull_shapes = nullptr;
-            options.clip = csg::clip_type::legacy;
-            built = csg::create_brush(map,brush,planes,{},nullptr,options);
-            expect(built.trim_planes[1].empty());
-        }
-    }
-
-    test("complete collision coverage is recorded independently for each hull")
-    {
-        const auto scratch = test_support::scratch_directory("csg_complete_collision");
-        const std::string wad_path = (scratch / "textures.wad").string();
-        test_wad::write(wad_path,{"STONE"});
-        csg::csg_options options;
-        options.brush.clip = csg::clip_type::exactunion;
-        options.wad.map_path = wad_path;
-        auto result = csg::run_csg(make_map(wad_path,"func_detail","exactunion"), options);
-        require(result.entities.size() == 1);
-        require(result.entities[0].brushes.size() == 1);
-        auto unselected = result.entities[0].brushes[0];
-        unselected.exact_union = false;
-        for (auto &planes : unselected.trim_planes) planes.clear();
-        // This represents an ordinary or custom hull expansion. A missing
-        // hull contributes no collision and must not disable another hull's flag.
-        unselected.hulls[2].faces.clear();
-        result.entities[0].brushes.push_back(std::move(unselected));
-        auto data = csg::build_intermediate_data(result,options.brush);
-        bsp::bsp_state state;
-        bsp::token_file file; file.set_text(data.hull_sizes);
-        bsp::parse_hull_sizes(state,file);
-        require(state.trim_groups.size() == 3);
-        for (const auto &group : state.trim_groups)
-        {
-            expect(group.complete == (group.hull == 2));
-            expect(group.guards.size() == (group.hull == 2 ? 1u : 2u));
-            expect(group.additions.size() == 1);
-        }
-    }
-
     test("cliptype.parses every reference value and rejects anything else")
     {
         csg::clip_type type = csg::clip_type::inherit;
@@ -252,9 +99,10 @@ suite("unit.csg.cliptype")
         expect(type == csg::clip_type::legacy);
         expect(csg::parse_clip_type("legacytrim", type));
         expect(type == csg::clip_type::legacytrim);
-        expect(csg::parse_clip_type("exactunion", type));
-        expect(type == csg::clip_type::exactunion);
-        expect(std::string(csg::clip_type_name(type)) == "exactunion");
+        expect(std::string(csg::clip_type_name(type)) == "legacytrim");
+        expect(!csg::parse_clip_type("exactunion", type));
+        expect(!csg::parse_clip_type("pyexact", type));
+        expect(!csg::parse_clip_type("pyboundary", type));
         expect(!csg::parse_clip_type("inherit", type));
         expect(!csg::parse_clip_type("nope", type));
     }
@@ -287,13 +135,9 @@ suite("unit.csg.cliptype")
 
         expect(run_and_read_local_clip(wad_path, "func_detail", "precise")
                == (int)csg::clip_type::precise);
-        expect(run_and_read_local_clip(wad_path, "func_detail", "legacytrim")
-               == (int)csg::clip_type::legacytrim);
-        expect(run_and_read_local_clip(wad_path, "func_detail", "exactunion")
-               == (int)csg::clip_type::exactunion);
     }
 
-    test("cliptype.pyboundary keeps a detail model separate from worldspawn")
+    test("cliptype.legacytrim keeps a detail model separate from worldspawn")
     {
         const std::filesystem::path scratch =
             test_support::scratch_directory("csg_cliptype_surface_detail");
@@ -305,13 +149,13 @@ suite("unit.csg.cliptype")
         options.wad.map_path = wad_path;
         options.wad.wad_textures = true;
         csg::csg_result result =
-            csg::run_csg(make_map(wad_path, "func_detail", "pyboundary"), options);
+            csg::run_csg(make_map(wad_path, "func_detail", "legacytrim"), options);
 
         require(result.map.entities.size() == 2);
         expect(std::string(result.map.entities[1].value("classname")) == "func_wall");
         require(result.map.entities[1].num_brushes == 1);
         expect(result.map.brushes[(size_t)result.map.entities[1].first_brush].local_clip
-               == (int)csg::clip_type::pyboundary);
+               == (int)csg::clip_type::legacytrim);
     }
 
     test("cliptype.func_group and unknown values inherit the global setting")

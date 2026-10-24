@@ -17,6 +17,7 @@
 #include "../common/log.h"
 #include "format/bsp/face_extents.h"
 #include "format/bsp/types.h"
+#include "../math/plane.h"
 
 // disk format emission: draw nodes, leafs, faces, clipnodes (with merging),
 // the used plane and used texinfo compaction, unused texdata removal, and the
@@ -1012,7 +1013,7 @@ namespace bsp
             fix_all_brinks(state);
         }
 
-        // Install pyexact trees after normal writer optimization and brink
+        // Install legacytrim trees after normal writer optimization and brink
         // preparation. Their planes and nodes are intentionally kept verbatim
         // so the Python fragment BSP remains the collision representation.
         install_surface_clips(state);
@@ -1032,15 +1033,5 @@ namespace bsp
             dp.dist = (float)mp.dist;
             dp.type = mp.type;
         }
-        // Direct surface trees are already complete collision graphs.  The
-        // legacy trimmer rewrites every model/hull root and its shared
-        // clipnode array; running it after installing a direct tree changes
-        // the direct tree's node numbering and can open solid walls.  Keep
-        // the legacy optimization for ordinary cliptypes only.
-        const bool has_direct_surface_clips = std::any_of(
-            state.surface_clips.begin(), state.surface_clips.end(),
-            [](const direct_clip::model &model) { return model.valid; });
-        if (!has_direct_surface_clips)
-            trim_legacy_collision(state);
     }
 }

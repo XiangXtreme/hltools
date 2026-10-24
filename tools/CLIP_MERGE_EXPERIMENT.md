@@ -11,7 +11,7 @@ bin/hltools.exe compile test.map -cliptype legacy -clipmerge -threads 2
 The default remains off. `info_compile_parameters` can persist the option as
 `"csg_clipmerge" "1"`. Local `zhlt_cliptype` overrides still take precedence
 over the global cliptype. The pass does not merge simple, precise, normalized,
-legacytrim or exactunion collision.
+or the continuous-surface `legacytrim` collision.
 
 ## Geometry Contract
 

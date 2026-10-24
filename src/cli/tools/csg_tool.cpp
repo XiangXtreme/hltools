@@ -24,7 +24,7 @@ namespace tools
             csg::clip_type clip = csg::clip_type::simple;
             const char *value = args.value("-cliptype", nullptr);
             if (value && !csg::parse_clip_type(value, clip))
-                err::fatal("-cliptype must be smallest, normalized, simple, precise, legacy, legacytrim, exactunion, pyexact, or pyboundary");
+                err::fatal("-cliptype must be smallest, normalized, simple, precise, legacy, or legacytrim");
             return clip;
         }
     }
@@ -99,10 +99,7 @@ namespace tools
                 "\n"
                 "geometry\n"
                 "  -cliptype <type>      smallest | normalized | simple | precise | legacy\n"
-                "                       legacytrim (trim excess legacy collision),\n"
-                "                       exactunion (exact brush and player-box union),\n"
-                "                       pyexact (exterior surface triangle hulls)\n"
-                "                       pyboundary (normalized whole-entity surface hulls)\n"
+                "                       legacytrim (continuous exterior surface hulls)\n"
                 "                                                       (default: simple)\n"
                 "                        func_detail may override with zhlt_cliptype\n"
                 "  -noclip               don't create the clipping hulls\n"

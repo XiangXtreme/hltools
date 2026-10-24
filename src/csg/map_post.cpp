@@ -312,8 +312,8 @@ namespace csg
         }
 
         // Surface collision trees replace the hulls of one brush model at
-        // BSP write time.  Keep a func_detail that explicitly requests one
-        // of those modes as its own brush entity so it can coexist with
+        // BSP write time.  Keep a func_detail that explicitly requests the
+        // legacytrim surface mode as its own brush entity so it can coexist with
         // ordinary worldspawn collision.  GoldSrc has no runtime
         // func_detail class, so use func_wall for the emitted model while
         // retaining the per-brush clip override.
@@ -326,7 +326,7 @@ namespace csg
             clip_type local = clip_type::inherit;
             const char *value = entity.value("zhlt_cliptype");
             if (!*value || !parse_clip_type(value, local)
-                || (local != clip_type::pyboundary && local != clip_type::pyexact))
+                || local != clip_type::legacytrim)
                 return false;
 
             for (int i = 0; i < entity.num_brushes; i++)
