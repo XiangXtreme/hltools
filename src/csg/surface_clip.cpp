@@ -83,6 +83,12 @@ namespace csg
             std::vector<boundary_term> terms;
         };
 
+        struct boundary_plane_ranges
+        {
+            std::vector<std::pair<vec_t, vec_t>> values;
+            std::vector<int> members;
+        };
+
         struct triangle
         {
             math::vec3v points[3];
@@ -1332,18 +1338,25 @@ namespace csg
             return result;
         }
 
-        std::vector<int> boundary_members(const boundary_poly &piece,
-                                          const std::vector<direct_clip::plane> &planes)
+        boundary_plane_ranges boundary_plane_ranges_for(
+            const boundary_poly &piece,
+            const std::vector<direct_clip::plane> &planes)
         {
-            std::vector<int> members;
+            boundary_plane_ranges ranges;
+            ranges.values.resize(planes.size(), {
+                std::numeric_limits<vec_t>::max(), -std::numeric_limits<vec_t>::max()});
+            ranges.members.reserve(planes.size());
             for (size_t i = 0; i < planes.size(); i++)
             {
-                vec_t maxv = -std::numeric_limits<vec_t>::max();
                 for (const auto &v : piece.vertices)
-                    maxv = std::max(maxv, math::dot(v, planes[i].normal) - planes[i].dist);
-                if (maxv <= (vec_t)1e-6) members.push_back((int)i);
+                {
+                    const vec_t value = math::dot(v, planes[i].normal) - planes[i].dist;
+                    ranges.values[i].first = std::min(ranges.values[i].first, value);
+                    ranges.values[i].second = std::max(ranges.values[i].second, value);
+                }
+                if (ranges.values[i].second <= (vec_t)1e-6) ranges.members.push_back((int)i);
             }
-            return members;
+            return ranges;
         }
 
         bool boundary_subset(const std::vector<int> &small, const std::vector<int> &large)
@@ -1376,7 +1389,8 @@ namespace csg
                 visited++;
                 if (visited > 20000)
                     err::fatal("pyboundary: adaptive composition exceeded the piece budget");
-                std::vector<int> members = boundary_members(piece, planes);
+                auto ranges = boundary_plane_ranges_for(piece, planes);
+                const auto &members = ranges.members;
                 if (accepted.count(members)) continue;
                 bool absorbed = false;
                 for (const auto &entry : accepted)
@@ -1417,16 +1431,13 @@ namespace csg
                 std::vector<std::pair<vec_t, int>> candidates;
                 for (int index = 0; index < (int)planes.size(); index++)
                 {
-                    vec_t minv = std::numeric_limits<vec_t>::max();
-                    vec_t maxv = -std::numeric_limits<vec_t>::max();
-                    for (const auto &v : piece.vertices)
-                    {
-                        vec_t x = math::dot(v, planes[(size_t)index].normal) - planes[(size_t)index].dist;
-                        minv = std::min(minv, x); maxv = std::max(maxv, x);
-                    }
                     vec_t outside = math::dot(witness, planes[(size_t)index].normal) - planes[(size_t)index].dist;
-                    if (minv < -(vec_t)1e-7 && maxv > (vec_t)1e-7 && outside > (vec_t)1e-7)
-                        candidates.push_back({outside / std::max(maxv - minv, (vec_t)1e-8), index});
+                    if (ranges.values[(size_t)index].first < -(vec_t)1e-7
+                        && ranges.values[(size_t)index].second > (vec_t)1e-7
+                        && outside > (vec_t)1e-7)
+                        candidates.push_back({outside / std::max(
+                            ranges.values[(size_t)index].second - ranges.values[(size_t)index].first,
+                            (vec_t)1e-8), index});
                 }
                 std::sort(candidates.begin(), candidates.end(), [](const auto &a, const auto &b) {
                     return a.first > b.first;
@@ -1440,13 +1451,8 @@ namespace csg
                 {
                     const int index = candidate.second;
                     last_candidate = index;
-                    last_min = std::numeric_limits<vec_t>::max();
-                    last_max = -std::numeric_limits<vec_t>::max();
-                    for (const auto &v : piece.vertices)
-                    {
-                        const vec_t x = math::dot(v, planes[(size_t)index].normal) - planes[(size_t)index].dist;
-                        last_min = std::min(last_min, x); last_max = std::max(last_max, x);
-                    }
+                    last_min = ranges.values[(size_t)index].first;
+                    last_max = ranges.values[(size_t)index].second;
                     auto front = clip_boundary_poly(piece, planes[(size_t)index], index);
                     auto back_plane = planes[(size_t)index];
                     back_plane.normal = -back_plane.normal;
