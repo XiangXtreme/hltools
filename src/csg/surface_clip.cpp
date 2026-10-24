@@ -553,16 +553,16 @@ namespace csg
             return triangles;
         }
 
-        std::vector<direct_clip::plane> expanded_planes(const point_list &base_points,
+        std::vector<direct_clip::plane> expanded_planes(const triangle &tri,
                                                         const math::vec3v &half)
         {
             std::vector<math::vec3v> points;
-            points.reserve(base_points.size() * 8);
+            points.reserve(24);
             for (const auto &corner : {math::vec3v{-1, -1, -1}, math::vec3v{-1, -1, 1},
                                        math::vec3v{-1, 1, -1}, math::vec3v{-1, 1, 1},
                                        math::vec3v{1, -1, -1}, math::vec3v{1, -1, 1},
                                        math::vec3v{1, 1, -1}, math::vec3v{1, 1, 1}})
-                for (const auto &v : base_points)
+                for (const auto &v : tri.points)
                     points.push_back(v + math::vec3v{corner.x * half.x, corner.y * half.y, corner.z * half.z});
 
             std::vector<direct_clip::plane> out;
@@ -608,35 +608,18 @@ namespace csg
             return out;
         }
 
-        std::vector<direct_clip::plane> expanded_planes(const triangle &tri,
-                                                        const math::vec3v &half)
-        {
-            return expanded_planes(point_list{tri.points[0], tri.points[1], tri.points[2]}, half);
-        }
-
-        fragment make_fragment(plane_table &planes, const point_list &base_points,
-                               const math::vec3v &half);
-
         fragment make_fragment(plane_table &planes, const triangle &tri,
                                const math::vec3v &half)
         {
-            return make_fragment(planes,
-                                 point_list{tri.points[0], tri.points[1], tri.points[2]},
-                                 half);
-        }
-
-        fragment make_fragment(plane_table &planes, const point_list &base_points,
-                               const math::vec3v &half)
-        {
             std::vector<math::vec3v> points;
-            points.reserve(base_points.size() * 8);
+            points.reserve(24);
             for (const auto &corner : {math::vec3v{-1, -1, -1}, math::vec3v{-1, -1, 1},
                                        math::vec3v{-1, 1, -1}, math::vec3v{-1, 1, 1},
                                        math::vec3v{1, -1, -1}, math::vec3v{1, -1, 1},
                                        math::vec3v{1, 1, -1}, math::vec3v{1, 1, 1}})
-                for (const auto &v : base_points)
+                for (const auto &v : tri.points)
                     points.push_back(v + math::vec3v{corner.x * half.x, corner.y * half.y, corner.z * half.z});
-            auto facets = expanded_planes(base_points, half);
+            auto facets = expanded_planes(tri, half);
             fragment out;
             out.vertices = std::move(points);
             out.incidence.resize(out.vertices.size());
@@ -2130,61 +2113,6 @@ namespace csg
             return tree;
         }
 
-        direct_clip::tree build_expanded_brush_hull(
-            const std::vector<const built_brush *> &brushes,
-            const csg_result &result, const math::vec3v &half)
-        {
-            direct_clip::tree tree;
-            plane_table planes;
-            std::vector<fragment> fragments;
-            math::vec3v bounds_min{}, bounds_max{};
-            bool have_bounds = false;
-            for (const built_brush *brush : brushes)
-            {
-                point_list vertices;
-                for (const auto &face : brush->hulls[0].faces)
-                    for (const auto &v : face.winding.points())
-                    {
-                        bool duplicate = false;
-                        for (const auto &old : vertices)
-                            if (math::length(v - old) <= boundary_clip_epsilon)
-                            { duplicate = true; break; }
-                        if (!duplicate) vertices.push_back(v);
-                    }
-                if (vertices.size() < 4) continue;
-                fragments.push_back(make_fragment(planes, vertices, half));
-                for (const auto &v : vertices)
-                    for (const auto &corner : {math::vec3v{-1, -1, -1}, math::vec3v{-1, -1, 1},
-                                               math::vec3v{-1, 1, -1}, math::vec3v{-1, 1, 1},
-                                               math::vec3v{1, -1, -1}, math::vec3v{1, -1, 1},
-                                               math::vec3v{1, 1, -1}, math::vec3v{1, 1, 1}})
-                    {
-                        const auto p = v + math::vec3v{corner.x * half.x,
-                                                       corner.y * half.y,
-                                                       corner.z * half.z};
-                        if (!have_bounds) { bounds_min = bounds_max = p; have_bounds = true; }
-                        else for (int axis = 0; axis < 3; axis++)
-                        {
-                            bounds_min[axis] = std::min(bounds_min[axis], p[axis]);
-                            bounds_max[axis] = std::max(bounds_max[axis], p[axis]);
-                        }
-                    }
-            }
-            if (fragments.empty()) return tree;
-            fragment_normalize_masks(fragments, planes.values.size());
-            logging::info("pyboundary: expanded %zu closed brushes, %zu planes, hull half %g %g %g\n",
-                          fragments.size(), planes.values.size(),
-                          (double)half.x, (double)half.y, (double)half.z);
-            build_tree_scratch build_scratch;
-            tree.head = build_tree(std::move(fragments), planes, tree.nodes, build_scratch);
-            tree.planes = std::move(planes.values);
-            tree.valid = tree.head >= 0;
-            compact_direct_tree(tree);
-            if (have_bounds) { tree.mins = bounds_min; tree.maxs = bounds_max; }
-            (void)result;
-            return tree;
-        }
-
     }
 
     std::vector<direct_clip::model> build_surface_clip_models(
@@ -2234,21 +2162,17 @@ namespace csg
             if (triangles.empty()) continue;
             if (boundary_mode && !exact_mode)
             {
-                // Expand each closed source brush as a convex Minkowski
-                // volume, then union those fragments in the same BSP.  A
-                // surface-only expansion can be open at touching brush
-                // seams; keeping the closed brush volumes seals those gaps
-                // without collapsing the whole entity into one convex term.
-                std::vector<const built_brush *> brushes;
-                for (const auto &brush : entity.brushes)
-                    if (brush.pyboundary && brush.contents == content::solid && !brush.skipped
-                        && !brush.hulls[0].faces.empty())
-                        brushes.push_back(&brush);
-                auto hull1 = std::async(std::launch::async, [&brushes, &result, &options]() {
-                    return build_expanded_brush_hull(brushes, result, options.hull_size[1][1]);
+                // Keep the Python reference route: every exposed exterior
+                // triangle becomes its own expanded convex fragment, and the
+                // fragments are composed by the fragment BSP.  Replacing
+                // this with whole-entity convex terms changes the contact
+                // surface at concave brush joins and no longer matches
+                // untitledx_pyboundary.bsp.
+                auto hull1 = std::async(std::launch::async, [&triangles, &options]() {
+                    return build_hull(triangles, options.hull_size[1][1]);
                 });
-                auto hull3 = std::async(std::launch::async, [&brushes, &result, &options]() {
-                    return build_expanded_brush_hull(brushes, result, options.hull_size[3][1]);
+                auto hull3 = std::async(std::launch::async, [&triangles, &options]() {
+                    return build_hull(triangles, options.hull_size[3][1]);
                 });
                 model.hulls[1] = hull1.get();
                 model.hulls[2] = model.hulls[1];
