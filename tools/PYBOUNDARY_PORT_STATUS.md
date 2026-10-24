@@ -131,3 +131,4 @@ bin/hltools.exe compile -threads 2 -cliptype pyboundary build/tmp/untitledx_pybo
 - `pyboundary` 默认不再要求全图使用；地图可保持 `-cliptype simple`，仅在 `func_detail` 上设置 `"zhlt_cliptype" "pyboundary"`。
 - 带 `pyboundary`/`pyexact` 局部覆盖的 `func_detail` 会保留为独立 brush model，输出时转为 GoldSrc 可挂载的 `func_wall`；worldspawn 和其他实体继续使用全局 cliptype。
 - `cliptype_sl.map` 已验证：worldspawn 使用普通 simple hull，局部 `func_detail` 生成独立 pyboundary model 1，hull1/hull3 各 8 nodes。测试 BSP：`D:/steam/steamapps/common/Half-Life/cstrike/maps/cliptype_sl_pyboundary_entity.bsp`。
+- `untitledx.map` 同样按默认 simple + 局部 `func_detail pyboundary` 编译成功：model 1 的 hull1/hull3 为 `2406/2501` nodes，总 BSP clipnodes `4925`（包含普通 worldspawn hull），完整 RAD 约 `11.8s`。测试 BSP：`D:/steam/steamapps/common/Half-Life/cstrike/maps/untitledx_pyboundary_entity.bsp`。
