@@ -93,3 +93,12 @@ bin/hltools.exe compile -threads 2 -cliptype pyboundary build/tmp/untitledx_pybo
 
 - `boundary_outside_parts()` 现在只计算一次当前 fragment 对 source plane 的 signed distances，并把该数组传给正向/反向裁剪；`clip_boundary_poly()` 在有缓存时跳过重复点积，保持原有 EPS、交边筛选和顶点顺序。
 - `untitledx` CSG 同机实测约 `8.7s`，相比约 `8.8s` 基线只有小幅收益；composition terms 和 direct nodes 保持 `250`、hull1/hull3 `2406/2501`。这是低风险的局部优化，后续仍需通过完整编译和随机判定验证。
+
+## 2026-10-24 pyboundary gameplay leak fix
+
+- `pyboundary` 的最终 hull 构建已改为 Python `brushbsp.py` 的直接路线：每个外部三角面分别做 box hull 扩张，再进入 fragment BSP；不再把三角面重新合并为 whole-entity 凸项。
+- 旧的 whole-entity composition 树在 `cliptype_sl` 的凹接缝处漏碰撞。坐标 `(-30, 60, 20)`、hull1：SDHLT simple 与 Python 参考为 `CONTENTS_SOLID`，旧 C++ pyboundary 为 `CONTENTS_EMPTY`。
+- 修复后同一点与 Python 参考一致；随机 200,000 个点的 hull1 判定差异为 `0`。
+- `cliptype_sl` 修复版 direct tree：hull1 `146` nodes、hull3 `165` nodes；未压缩树分别为 `473/493`，与 Python fragment 路线的语义一致。
+- 可测试文件：`D:/steam/steamapps/common/Half-Life/cstrike/maps/cliptype_sl_pyboundary_direct.bsp`，原 SDHLT simple `cliptype_sl.bsp` 未覆盖。
+- 同一修改在 `untitledx_pyboundary.map` 上完成：942 个外部三角面，hull1/hull3 压缩后 `7553/7586` direct nodes，最终 `15139` clipnodes，完整编译约 `5.9s`，未触及 32,767 限制。

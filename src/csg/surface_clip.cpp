@@ -2162,19 +2162,17 @@ namespace csg
             if (triangles.empty()) continue;
             if (boundary_mode && !exact_mode)
             {
-                std::vector<const built_brush *> brushes;
-                for (const auto &brush : entity.brushes)
-                    if (brush.pyboundary && brush.contents == content::solid && !brush.skipped
-                        && !brush.hulls[0].faces.empty())
-                        brushes.push_back(&brush);
-                // Every entity uses the whole-entity adaptive composition
-                // path, matching boundary_normalize.py.
-                const auto composition = prepare_boundary_composition(triangles, brushes, result);
-                auto hull1 = std::async(std::launch::async, [&composition, &options]() {
-                    return build_boundary_hull(composition, options.hull_size[1][1]);
+                // The Python route keeps every exterior triangle as an
+                // independent grown convex fragment.  Do not collapse the
+                // surface back into whole-entity convex terms here: that
+                // loses concave brush junctions (for example the left hand
+                // wall in cliptype_sl) and leaves a walkable gap.  The
+                // fragment BSP is the collision representation itself.
+                auto hull1 = std::async(std::launch::async, [&triangles, &options]() {
+                    return build_hull(triangles, options.hull_size[1][1]);
                 });
-                auto hull3 = std::async(std::launch::async, [&composition, &options]() {
-                    return build_boundary_hull(composition, options.hull_size[3][1]);
+                auto hull3 = std::async(std::launch::async, [&triangles, &options]() {
+                    return build_hull(triangles, options.hull_size[3][1]);
                 });
                 model.hulls[1] = hull1.get();
                 model.hulls[2] = model.hulls[1];
