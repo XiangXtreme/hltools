@@ -28,7 +28,7 @@ namespace csg
         std::string brushes[num_hulls];  // b0 through b3 per hull detail brush text
         std::string hull_sizes;          // hsz text
         std::vector<byte> planes;        // pln binary plane records
-        std::vector<direct_clip::model> surface_clips; // pyexact direct trees
+        std::vector<direct_clip::model> surface_clips; // Python-style direct surface trees
     };
 
     intermediate_data build_intermediate_data(const csg_result &result,

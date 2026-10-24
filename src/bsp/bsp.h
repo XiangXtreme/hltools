@@ -48,7 +48,7 @@ namespace bsp
         std::string brushes[num_hulls];  // b0 through b3
         std::string hull_sizes;          // hsz
         std::vector<byte> planes;        // pln
-        std::vector<direct_clip::model> surface_clips; // pyexact direct trees
+        std::vector<direct_clip::model> surface_clips; // Python-style direct surface trees
     };
 
     // same stage, but consumes in memory csg output instead of the sidecar

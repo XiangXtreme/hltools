@@ -89,6 +89,7 @@ namespace csg
         legacytrim,
         exactunion,
         pyexact,
+        pyboundary,
     };
 
     struct brush_build_options
@@ -126,6 +127,7 @@ namespace csg
         math::bounding_box trim_bounds[num_hulls];
         bool exact_union = false;
         bool pyexact = false;
+        bool pyboundary = false;
         bool skipped = false;
     };
 

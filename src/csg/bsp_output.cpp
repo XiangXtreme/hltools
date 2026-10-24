@@ -785,11 +785,12 @@ namespace csg
         }
 
         data.planes = plane_file_bytes(result.planes);
-        bool wants_surface_clips = options.clip == clip_type::pyexact;
+        bool wants_surface_clips = options.clip == clip_type::pyexact
+            || options.clip == clip_type::pyboundary;
         if (!wants_surface_clips)
             for (const auto &entity : result.entities)
                 for (const auto &brush : entity.brushes)
-                    wants_surface_clips = wants_surface_clips || brush.pyexact;
+                    wants_surface_clips = wants_surface_clips || brush.pyexact || brush.pyboundary;
         if (wants_surface_clips)
             data.surface_clips = build_surface_clip_models(result, options);
         // Optional .hsz extension (v3 marks complete exact-union coverage).

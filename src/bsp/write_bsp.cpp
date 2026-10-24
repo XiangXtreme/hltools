@@ -901,7 +901,7 @@ namespace bsp
                     const int plane_base = (int)state.planes.size();
                     if (state.planes.size() > (size_t)limits::max_map_planes
                         || tree.planes.size() > ((size_t)limits::max_map_planes - state.planes.size()) / 2)
-                        err::fatal("pyexact: collision exceeds %d planes", limits::max_map_planes);
+                        err::fatal("direct surface collision exceeds %d planes", limits::max_map_planes);
                     for (const auto &source : tree.planes)
                     {
                         plane p;
@@ -919,7 +919,7 @@ namespace bsp
                     const int node_base = (int)map.clipnodes.size();
                     if (map.clipnodes.size() > (size_t)limits::max_map_clipnodes
                         || tree.nodes.size() > (size_t)limits::max_map_clipnodes - map.clipnodes.size())
-                        err::fatal("pyexact: collision exceeds %d clipnodes", limits::max_map_clipnodes);
+                        err::fatal("direct surface collision exceeds %d clipnodes", limits::max_map_clipnodes);
                     map.clipnodes.resize(map.clipnodes.size() + tree.nodes.size());
                     for (size_t i = 0; i < tree.nodes.size(); i++)
                     {
@@ -927,14 +927,14 @@ namespace bsp
                         format::dclipnode_t &out = map.clipnodes[(size_t)node_base + i];
                         out.planenum = plane_base + source.plane * 2;
                         if (out.planenum < 0 || out.planenum >= limits::max_map_planes)
-                            err::fatal("pyexact: invalid direct plane index");
+                            err::fatal("invalid direct surface plane index");
                         const int children[2] = {source.front, source.back};
                         for (int side = 0; side < 2; side++)
                         {
                             int child = children[side];
                             if (child >= 0) child += node_base;
                             if (child >= limits::max_map_clipnodes)
-                                err::fatal("pyexact: collision exceeds %d clipnodes", limits::max_map_clipnodes);
+                                err::fatal("direct surface collision exceeds %d clipnodes", limits::max_map_clipnodes);
                             out.children[side] = (short)child;
                         }
                     }
@@ -944,7 +944,7 @@ namespace bsp
                 int standing = append_tree(direct.hulls[1]);
                 int ducking = append_tree(direct.hulls[3]);
                 if (standing < 0 || ducking < 0)
-                    err::fatal("pyexact: model %zu has an invalid collision tree", model_index);
+                    err::fatal("model %zu has an invalid direct surface collision tree", model_index);
                 model.headnode[1] = standing;
                 model.headnode[2] = standing;
                 model.headnode[3] = ducking;

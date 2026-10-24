@@ -61,6 +61,8 @@ namespace csg
             out = clip_type::exactunion;
         else if (str::iequals(value, "pyexact"))
             out = clip_type::pyexact;
+        else if (str::iequals(value, "pyboundary"))
+            out = clip_type::pyboundary;
         else
             return false;
         return true;
@@ -86,6 +88,8 @@ namespace csg
             return "exactunion";
         case clip_type::pyexact:
             return "pyexact";
+        case clip_type::pyboundary:
+            return "pyboundary";
         case clip_type::inherit:
             return "inherit";
         default:
