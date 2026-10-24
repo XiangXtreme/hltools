@@ -104,10 +104,22 @@ namespace bsp
             model->headnode[0] = (int)map.nodes.size();
             model->firstface = (int)map.faces.size();
             bool novisiblebrushes = false;
+            const format::entity *model_entity = entity_for_model(state, modnum);
+            const bool collision_only = model_entity != nullptr
+                && std::strcmp(model_entity->value("zhlt_collision_only"), "1") == 0;
             // model->headnode[0] < 0 will crash the engine, so split it
-            if (nodes->planenum == -1)
+            if (collision_only || nodes->planenum == -1)
             {
                 novisiblebrushes = true;
+                // A collision-only surface model still needs a valid empty
+                // draw tree, but must not emit its ordinary hull-0 faces.
+                // The direct surface tree is installed into hulls 1-3 below.
+                if (collision_only)
+                {
+                    nodes->planenum = -1;
+                    nodes->markfaces = nullptr;
+                    nodes->faces = nullptr;
+                }
                 if (nodes->markfaces && nodes->markfaces[0] != nullptr)
                     err::fatal("process_model: empty solid entity");
                 if (state.planes.empty())
@@ -225,7 +237,7 @@ namespace bsp
                 model->mins[0] = model->mins[1] = model->mins[2] = 0;
                 model->maxs[0] = model->maxs[1] = model->maxs[2] = 0;
             }
-            else if (novisiblebrushes)
+            else if (novisiblebrushes && !collision_only)
             {
                 const format::entity *ent = entity_for_model(state, state.nummodels - 1);
                 if (state.nummodels - 1 != 0 && ent == &state.entities[0])

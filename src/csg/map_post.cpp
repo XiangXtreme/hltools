@@ -314,9 +314,45 @@ namespace csg
         // Surface collision trees replace the hulls of one brush model at
         // BSP write time.  Keep a func_detail that explicitly requests the
         // legacytrim surface mode as its own brush entity so it can coexist with
-        // ordinary worldspawn collision.  GoldSrc has no runtime
-        // func_detail class, so use func_wall for the emitted model while
-        // retaining the per-brush clip override.
+        // ordinary worldspawn collision.  Its render copy is also placed in
+        // worldspawn: GoldSrc brush entities have a separate draw tree, and
+        // making the same closed assembly both the render model and the direct
+        // collision model can leave a hole at a CSG seam.  The entity model is
+        // therefore marked collision-only and receives only the direct hulls.
+        void copy_surface_detail_to_worldspawn(map_source &map, int entity_num)
+        {
+            map_entity &entity = map.entities[(size_t)entity_num];
+            const int count = entity.num_brushes;
+            if (count <= 0)
+                return;
+
+            const int insert_at = map.entities[0].num_brushes;
+            std::vector<map_brush> copies;
+            copies.reserve((size_t)count);
+            for (int i = 0; i < count; i++)
+            {
+                map_brush copy = map.brushes[(size_t)entity.first_brush + i];
+                copy.entity_num = 0;
+                copy.brush_num = insert_at + i;
+                // The world copy supplies render geometry only.  Keeping the
+                // local legacytrim override here would make the world copy
+                // another direct-tree candidate.
+                copy.local_clip = (int)clip_type::inherit;
+                copy.noclip = 1;
+                copies.push_back(std::move(copy));
+            }
+
+            map.brushes.insert(map.brushes.begin() + insert_at,
+                               copies.begin(), copies.end());
+            map.entities[0].num_brushes += count;
+            for (size_t i = 1; i < map.entities.size(); i++)
+                if ((int)i != entity_num
+                    && map.entities[i].first_brush >= insert_at)
+                    map.entities[i].first_brush += count;
+            if (entity.first_brush >= insert_at)
+                entity.first_brush += count;
+        }
+
         bool preserve_surface_detail(map_source &map, int entity_num)
         {
             map_entity &entity = map.entities[(size_t)entity_num];
@@ -329,9 +365,11 @@ namespace csg
                 || local != clip_type::legacytrim)
                 return false;
 
+            copy_surface_detail_to_worldspawn(map, entity_num);
             for (int i = 0; i < entity.num_brushes; i++)
                 map.brushes[(size_t)entity.first_brush + i].local_clip = (int)local;
             entity.set_value("classname", "func_wall");
+            entity.set_value("zhlt_collision_only", "1");
             return true;
         }
 
