@@ -23,7 +23,7 @@ cmake --build build/vs --config Release --parallel 4 --target hltools
 bin/hltools.exe compile -threads 2 -cliptype pyboundary build/tmp/untitledx_pyboundary.map
 ```
 
-当前样例完成 CSG、BSP、VIS、RAD，输出 `build/tmp/untitledx_pyboundary.bsp`。本次结果记录为：外部输入 1828 faces、942 triangles；删除 67 个微 seam triangles；direct hull1/hull3 分别为 15565/15193 nodes；最终 BSP 共 30758 clipnodes，低于 GoldSrc 的 32767 限制。完整测试套件为 193/193 通过。
+当前样例完成 CSG、BSP、VIS、RAD，输出 `build/tmp/untitledx_pyboundary.bsp`。按有界 whole-entity source term 路径，本次结果记录为：外部输入 1828 faces、942 triangles；删除 48 个微 seam planes；生成 349 个 source terms；direct hull1/hull3 分别为 4182/4215 nodes；完整 BSP 为 8397 clipnodes，低于 GoldSrc 的 32767 限制。完整测试套件为 193/193 通过。
 
 ## 使用方式
 
@@ -35,4 +35,4 @@ bin/hltools.exe compile -threads 2 -cliptype pyboundary build/tmp/untitledx_pybo
 
 ## 后续工作
 
-大型 entity 当前采用有界的 normalized surface fragment 路径；若要完全复现 Python `boundary_normalize.py` 的 252 convex terms，还需要把其 whole-entity arrangement 的稳定凸多面体重建继续替换进 C++。当前 direct tree 已可用于结构检查和进图验证，但不能把节点数或表面组成视为 Python 基准的逐项一致副本。
+大型 entity 当前采用有界的 source term 路径；若要完全复现 Python `boundary_normalize.py` 的 252 convex terms，还需要把其 whole-entity arrangement 的稳定凸多面体重建继续替换进 C++。当前 direct tree 已可用于结构检查和进图验证，但不能把节点数或表面组成视为 Python 基准的逐项一致副本。

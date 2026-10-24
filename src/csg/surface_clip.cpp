@@ -585,7 +585,10 @@ namespace csg
         {
             point_list merged;
             std::vector<std::set<int>> merged_incidence;
-            const vec_t snap = (vec_t)4e-3;
+            // Match the Python polyhedron deduplication scale.  A millimeter
+            // snap merges neighboring terrain vertices and destroys edge
+            // incidence, which is fatal to the adaptive arrangement.
+            const vec_t snap = (vec_t)1e-9;
             for (size_t i = 0; i < vertices.size(); i++)
             {
                 size_t found = merged.size();
@@ -670,12 +673,22 @@ namespace csg
                     maxv = std::max(maxv, side);
                 }
                 if (!(minv >= -(vec_t)1e-6 || maxv <= (vec_t)1e-6)) continue;
-
-                // A supporting plane through the pair proves that the segment
-                // lies on the convex boundary.  Coplanar diagonals are harmless
-                // after vertex merging and are far fewer than all crossing
-                // pairs; this is only used as a numerical recovery path.
-                return true;
+                // On that supporting face, the pair is an edge only when all
+                // coplanar points lie on one side of the pair line.  This
+                // rejects diagonals of large coplanar faces, which otherwise
+                // create quadratic numbers of recovery vertices.
+                math::vec3v line_side;
+                math::cross(normal, edge, line_side);
+                vec_t line_min = std::numeric_limits<vec_t>::max();
+                vec_t line_max = -std::numeric_limits<vec_t>::max();
+                for (const auto &v : vertices)
+                {
+                    const vec_t side = math::dot(v - vertices[a], line_side);
+                    line_min = std::min(line_min, side);
+                    line_max = std::max(line_max, side);
+                }
+                if (line_min >= -(vec_t)1e-5 || line_max <= (vec_t)1e-5)
+                    return true;
             }
             return false;
         }
@@ -789,7 +802,13 @@ namespace csg
             math::vec3v center{};
             for (const auto &v : poly.vertices) center += v;
             center = center * ((vec_t)1 / (vec_t)poly.vertices.size());
-            vec_t volume = 0;
+            struct face_group
+            {
+                math::vec3v normal;
+                vec_t dist;
+                point_list points;
+            };
+            std::vector<face_group> groups;
             std::set<int> plane_ids;
             for (const auto &inc : poly.incidence) plane_ids.insert(inc.begin(), inc.end());
             for (int pid : plane_ids)
@@ -818,6 +837,34 @@ namespace csg
                     normal = -normal;
                     dist = -dist;
                 }
+                face_group *group = nullptr;
+                for (auto &candidate : groups)
+                    if (math::length(candidate.normal - normal) <= (vec_t)1e-5
+                        && std::fabs(candidate.dist - dist) <= (vec_t)1e-4)
+                    {
+                        group = &candidate;
+                        break;
+                    }
+                if (!group)
+                {
+                    groups.push_back({normal, dist, {}});
+                    group = &groups.back();
+                }
+                for (const auto &p : points)
+                {
+                    bool duplicate = false;
+                    for (const auto &old : group->points)
+                        if (math::length(old - p) <= (vec_t)1e-8) { duplicate = true; break; }
+                    if (!duplicate) group->points.push_back(p);
+                }
+            }
+
+            vec_t volume = 0;
+            for (const auto &group : groups)
+            {
+                const auto &normal = group.normal;
+                const auto &points = group.points;
+                if (points.size() < 3) continue;
                 math::vec3v ref = std::fabs(normal.z) < (vec_t)0.9
                     ? math::vec3v{0, 0, 1} : math::vec3v{1, 0, 0};
                 math::vec3v u;
@@ -1092,34 +1139,13 @@ namespace csg
             std::set<std::vector<int>> unique;
             for (const auto &piece : source_pieces)
             {
-                std::vector<int> members;
-                for (size_t i = 0; i < planes.size(); i++)
-                {
-                    vec_t maxv = -std::numeric_limits<vec_t>::max();
-                    point_list face;
-                    for (const auto &v : piece.vertices)
-                    {
-                        const vec_t side = math::dot(v, planes[i].normal) - planes[i].dist;
-                        maxv = std::max(maxv, side);
-                        if (std::fabs(side) <= (vec_t)1e-5) face.push_back(v);
-                    }
-                    bool support = false;
-                    for (size_t a = 1; a + 1 < face.size() && !support; a++)
-                        for (size_t b = a + 1; b < face.size() && !support; b++)
-                        {
-                            math::vec3v cross;
-                            math::cross(face[a] - face[0], face[b] - face[0], cross);
-                            support = math::length(cross) > (vec_t)1e-7;
-                        }
-                    if (maxv <= (vec_t)1e-6 && support)
-                        members.push_back((int)i);
-                }
+                std::vector<int> members = boundary_members(piece, planes);
                 if (!members.empty()) unique.insert(std::move(members));
             }
             std::vector<boundary_term> result;
             for (const auto &members : unique) result.push_back({members});
-            // These seed closures have not gone through the adaptive
-            // containment proof, so subset absorption would be unsound here.
+            // These seed closures are not independently containment-proven;
+            // keep every source term instead of applying Boolean absorption.
             return result;
         }
 
@@ -1429,35 +1455,6 @@ namespace csg
             return tree;
         }
 
-        std::vector<triangle> remove_boundary_micro_seams(const std::vector<triangle> &triangles)
-        {
-            std::vector<triangle> result;
-            result.reserve(triangles.size());
-            size_t removed = 0;
-            for (const auto &tri : triangles)
-            {
-                if (std::fabs(tri.normal.z) <= boundary_plane_epsilon)
-                {
-                    vec_t span = 0;
-                    for (int e = 0; e < 3; e++)
-                    {
-                        const auto delta = tri.points[(e + 1) % 3] - tri.points[e];
-                        span = std::max(span, (vec_t)std::sqrt(delta.x * delta.x + delta.y * delta.y));
-                    }
-                    math::vec3v cross;
-                    math::cross(tri.points[1] - tri.points[0], tri.points[2] - tri.points[0], cross);
-                    const vec_t twice_area = (vec_t)math::length(cross);
-                    if (span > (vec_t)1e-10 && twice_area / span <= boundary_roof_lift)
-                    {
-                        removed++;
-                        continue;
-                    }
-                }
-                result.push_back(tri);
-            }
-            logging::info("pyboundary: removed %zu micro-seam triangles\n", removed);
-            return result;
-        }
     }
 
     std::vector<direct_clip::model> build_surface_clip_models(
@@ -1512,20 +1509,14 @@ namespace csg
                     if (brush.pyboundary && brush.contents == content::solid && !brush.skipped
                         && !brush.hulls[0].faces.empty())
                         brushes.push_back(&brush);
-                // The adaptive whole-entity Boolean is intentionally bounded
-                // to small assemblies.  For terrain-sized entities, use the
-                // same normalized exterior triangle stream as the Python
-                // fragment compiler; this keeps memory linear in the number
-                // of exposed faces and preserves all real boundary planes.
-                const auto normalized = brushes.size() > 128
-                    ? remove_boundary_micro_seams(triangles) : triangles;
-                model.hulls[1] = brushes.size() > 128
-                    ? build_hull(normalized, options.hull_size[1][1])
-                    : build_boundary_hull(triangles, brushes, result, options.hull_size[1][1]);
+                // The composition routine switches to a bounded source-term
+                // seed for terrain-sized entities, while retaining the
+                // adaptive proof path for small assemblies.
+                model.hulls[1] = build_boundary_hull(triangles, brushes, result,
+                                                      options.hull_size[1][1]);
                 model.hulls[2] = model.hulls[1];
-                model.hulls[3] = brushes.size() > 128
-                    ? build_hull(normalized, options.hull_size[3][1])
-                    : build_boundary_hull(triangles, brushes, result, options.hull_size[3][1]);
+                model.hulls[3] = build_boundary_hull(triangles, brushes, result,
+                                                      options.hull_size[3][1]);
             }
             else
             {
@@ -1542,3 +1533,4 @@ namespace csg
         return out;
     }
 }
+
