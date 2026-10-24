@@ -768,11 +768,11 @@ namespace csg
             // Match brushbsp.py's bounded splitter survey.  Without this cap
             // a large terrain shell spends most of its time scoring every
             // historical facet plane at every recursive cell.
-            if (candidates.size() > 24)
+            if (candidates.size() > 12)
             {
                 std::mt19937 rng(0x5eedu + (unsigned)depth);
                 std::shuffle(candidates.begin(), candidates.end(), rng);
-                candidates.resize(24);
+                candidates.resize(12);
             }
 
             int best = -1;

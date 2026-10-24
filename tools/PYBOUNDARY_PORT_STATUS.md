@@ -53,6 +53,12 @@ bin/hltools.exe compile -threads 2 -cliptype pyboundary build/tmp/untitledx_pybo
 - Release 实测完整 `compile -threads 2 -cliptype pyboundary` 约 `16.1～16.3s`；193/193 项测试通过。相对单次运行的差异应以同机重复测量为准。
 - `split_fragment()` 的边交集检查进一步改为先无分配统计共同 incidence 位数，只有确认至少两个共同约束时才创建交集 bitset；输出拓扑保持不变，单次完整编译受机器负载影响约 `16.7～16.9s`，暂未观察到稳定的总耗时下降。
 
+## 2026-10-24 splitter 候选集取舍
+
+- 将 fragment BSP 每层的随机候选上限从 `24` 降为 `12`。`untitledx` 的 direct nodes 变为 hull1/hull3 `2406/2501`，最终 `4907` 个 clipnodes，完整编译约 `15.9s`。
+- 与上一份参考 BSP 随机抽取 300,000 个点比较，hull1、hull2、hull3 判定差异均为 `0`；`cliptype_sl` 回归也正常生成 hull1/hull3 各 `25` nodes。
+- 上限 `48` 的实验反而生成 `2764/2486` direct nodes、`5250` final clipnodes，因此不采用。候选上限是当前算法级的可调参数：`12` 偏向节点数和速度，继续降低可能增加随机拆分波动。
+
 验证副本：`build/tmp/untitledx_pyboundary.bsp`；上一版纯压缩副本：`build/tmp/untitledx_pyboundary_compacted.bsp`。
 
 最新验证：`untitledx` 的 CSG 阶段约 15～16 秒，完整 CSG/BSP/VIS/RAD 编译耗时约 19.3 秒；最终仍为 7,981 个 clipnodes（32,767 上限的 24.4%）、hull1/hull3 为 4,014/3,967，几何统计与前一版一致。193/193 项测试通过。
