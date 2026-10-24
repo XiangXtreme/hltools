@@ -118,3 +118,10 @@ bin/hltools.exe compile -threads 2 -cliptype pyboundary build/tmp/untitledx_pybo
 - `untitledx` 当前恢复为 hull1/hull3 `2406/2501`、总 clipnodes `4907`，与参考 BSP 的 300,000 个随机 hull1 判定差异为 `0`。
 - direct tree 安装保留原始平面方向和子节点顺序；这与参考 BSP 的 clipnode 编码一致，不能再对轴向平面做正轴规范化。
 - 最新 C++ 输出与参考 `untitledx_pyboundary.bsp` 的 planes、clipnodes、models、visibility、lighting 等 BSP lump 均逐字节一致，只有实体文本中的编译信息不同。
+
+## 2026-10-24 world brush seam sealing
+
+- `cliptype_sl` 的 whole-entity composition 在凹接缝处会漏掉少量墙面；仅对小型闭合组合（不超过 16 个 whole terms）加入原始轴对齐墙面片段，坡面仍使用 whole composition。
+- `cliptype_sl` 最终验证版 hull1/hull3 各 44 nodes、总 88 clipnodes；已知墙点 `(-30,60,20)`、`(80,0,21)` 以及四个坡面点均为 `CONTENTS_SOLID`，出生点保持为空。
+- 大型 terrain composition 不启用墙面补片；`untitledx` 输出的 planes、clipnodes、models、VIS、RAD 等关键 lump 与参考 BSP 逐字节一致。
+- 小型树在写入 GoldSrc BSP 时规范化负轴向平面，大型 terrain 树保留 Python 原始方向，以同时满足墙体封闭和参考 terrain 形态。

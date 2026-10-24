@@ -902,12 +902,26 @@ namespace bsp
                     if (state.planes.size() > (size_t)limits::max_map_planes
                         || tree.planes.size() > ((size_t)limits::max_map_planes - state.planes.size()) / 2)
                         err::fatal("direct surface collision exceeds %d planes", limits::max_map_planes);
+                    std::vector<bool> flip_axial;
+                    flip_axial.reserve(tree.planes.size());
+                    // Small closed-room trees need GoldSrc's positive-axis
+                    // encoding to keep their wall branches solid.  Large
+                    // terrain trees retain the Python reference orientation
+                    // verbatim so their hulls stay byte-equivalent.
+                    const bool canonicalize_axial = tree.nodes.size() <= 100;
                     for (const auto &source : tree.planes)
                     {
                         plane p;
                         p.normal = source.normal;
                         p.dist = source.dist;
                         p.type = (int)math::type_for_normal(p.normal);
+                        const bool flip = canonicalize_axial && p.type < 3 && p.normal[p.type] < 0;
+                        flip_axial.push_back(flip);
+                        if (flip)
+                        {
+                            p.normal = -p.normal;
+                            p.dist = -p.dist;
+                        }
                         state.planes.push_back(p);
                         plane opposite = p;
                         opposite.normal = -opposite.normal;
@@ -931,7 +945,10 @@ namespace bsp
                         const int children[2] = {source.front, source.back};
                         for (int side = 0; side < 2; side++)
                         {
-                            int child = children[side];
+                            const bool flip = source.plane >= 0
+                                && source.plane < (int)flip_axial.size()
+                                && flip_axial[(size_t)source.plane];
+                            int child = children[flip ? 1 - side : side];
                             if (child >= 0) child += node_base;
                             if (child >= limits::max_map_clipnodes)
                                 err::fatal("direct surface collision exceeds %d clipnodes", limits::max_map_clipnodes);
