@@ -78,6 +78,14 @@ bin/hltools.exe compile -threads 2 -cliptype pyboundary build/tmp/untitledx_pybo
 ## 2026-10-24 vector incidence 优化
 
 - 将 boundary poly 顶点 incidence 从 `std::set<int>` 改为保持排序的 `vector<int>`，插入、包含、并集和交集都保持原有集合语义。
+
+## 2026-10-24 brush-union 接缝修复
+
+- 对相接的闭合 brush，最终 pyboundary 路径改为：收集每个闭合 brush 的完整 hull-0 顶点，分别做 player hull 的 Minkowski 扩张，再把这些凸体 fragment 放进同一个 direct BSP。这样扩张壳体在 brush 接缝处保持封闭，避免只提取外部三角面时出现可穿越的局部缝隙。
+- BSP 收尾阶段不再对存在 direct surface tree 的编译运行 `legacytrim`。legacytrim 会重写共享 clipnode 图，破坏 direct tree 的局部编号关系。
+- 安装 direct tree 时，轴向负法向统一转换为 GoldSrc 的正轴表示，并交换两个子节点；否则 BSP 中的负轴平面会被引擎按轴向平面错误解释，表现为整面墙可穿越。
+- `cliptype_sl.map` 验证副本：`D:\steam\steamapps\common\Half-Life\cstrike\maps\cliptype_sl_pyboundary_brushunion.bsp`。hull1/hull3 各 38 个 direct nodes；`(80,0,21)`、`(26.58,-47.68,31.51)`、`(27.8,-23.7,5.35)`、`(61.95,-7.62,-5.85)`、`(16.17,-44.6,22)` 均为 SOLID，出生点 `(-48,112,20)` 为空。
+- `untitledx_pyboundary.map` 当前 Release 编译约 6.8 秒，最终 9,049 个 clipnodes、12,647 个 planes，未接近 32,767 clipnode 上限。
 - `untitledx` 的 direct nodes 保持 hull1/hull3 `2406/2501`，最终 BSP clipnodes 保持 `4907`；完整编译两次约 `11.8s/12.0s`。
 - 与参考 BSP 随机比较 300,000 点，hull1/2/3 判定差异均为 `0`；`cliptype_sl` 回归生成 hull1/hull3 各 `25` nodes；`ctest` 193/193 通过。
 

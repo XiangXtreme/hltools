@@ -902,12 +902,27 @@ namespace bsp
                     if (state.planes.size() > (size_t)limits::max_map_planes
                         || tree.planes.size() > ((size_t)limits::max_map_planes - state.planes.size()) / 2)
                         err::fatal("direct surface collision exceeds %d planes", limits::max_map_planes);
+                    std::vector<bool> flip_axial;
+                    flip_axial.reserve(tree.planes.size());
                     for (const auto &source : tree.planes)
                     {
                         plane p;
                         p.normal = source.normal;
                         p.dist = source.dist;
                         p.type = (int)math::type_for_normal(p.normal);
+                        // GoldSrc stores axial planes with the positive axis
+                        // orientation.  The Python tree may use the
+                        // geometrically equivalent negative axial form (for
+                        // example -X <= 208).  Canonicalize that plane and
+                        // exchange its children so the represented halfspace
+                        // stays identical in the engine's clipnode format.
+                        const bool flip = p.type < 3 && p.normal[p.type] < 0;
+                        flip_axial.push_back(flip);
+                        if (flip)
+                        {
+                            p.normal = -p.normal;
+                            p.dist = -p.dist;
+                        }
                         state.planes.push_back(p);
                         plane opposite = p;
                         opposite.normal = -opposite.normal;
@@ -931,7 +946,10 @@ namespace bsp
                         const int children[2] = {source.front, source.back};
                         for (int side = 0; side < 2; side++)
                         {
-                            int child = children[side];
+                            const bool flip = source.plane >= 0
+                                && source.plane < (int)flip_axial.size()
+                                && flip_axial[(size_t)source.plane];
+                            int child = children[flip ? 1 - side : side];
                             if (child >= 0) child += node_base;
                             if (child >= limits::max_map_clipnodes)
                                 err::fatal("direct surface collision exceeds %d clipnodes", limits::max_map_clipnodes);
@@ -1015,6 +1033,15 @@ namespace bsp
             dp.dist = (float)mp.dist;
             dp.type = mp.type;
         }
-        trim_legacy_collision(state);
+        // Direct surface trees are already complete collision graphs.  The
+        // legacy trimmer rewrites every model/hull root and its shared
+        // clipnode array; running it after installing a direct tree changes
+        // the direct tree's node numbering and can open solid walls.  Keep
+        // the legacy optimization for ordinary cliptypes only.
+        const bool has_direct_surface_clips = std::any_of(
+            state.surface_clips.begin(), state.surface_clips.end(),
+            [](const direct_clip::model &model) { return model.valid; });
+        if (!has_direct_surface_clips)
+            trim_legacy_collision(state);
     }
 }
