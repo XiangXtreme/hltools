@@ -57,7 +57,7 @@ namespace csg
         {
             point_list vertices;
             std::vector<std::set<int>> incidence;
-            std::map<int, direct_clip::plane> constraints;
+            std::shared_ptr<std::map<int, direct_clip::plane>> constraints;
             math::bounding_box bounds;
         };
 
@@ -583,7 +583,7 @@ namespace csg
 
         void compact_boundary_vertices(boundary_poly &poly)
         {
-            if (poly.vertices.size() < 5 || poly.constraints.empty()) return;
+            if (poly.vertices.size() < 5 || !poly.constraints || poly.constraints->empty()) return;
             point_list vertices;
             std::vector<std::set<int>> incidence;
             vertices.reserve(poly.vertices.size());
@@ -595,8 +595,8 @@ namespace csg
                 std::vector<const direct_clip::plane *> planes;
                 for (int id : ids)
                 {
-                    auto it = poly.constraints.find(id);
-                    if (it != poly.constraints.end()) planes.push_back(&it->second);
+                    auto it = poly.constraints->find(id);
+                    if (it != poly.constraints->end()) planes.push_back(&it->second);
                 }
                 for (size_t a = 0; a < planes.size() && !corner; a++)
                     for (size_t b = a + 1; b < planes.size() && !corner; b++)
@@ -674,14 +674,15 @@ namespace csg
                 {hi.x, hi.y, lo.z}, {hi.x, hi.y, hi.z},
             };
             out.incidence.resize(out.vertices.size());
-            out.constraints = {
+            out.constraints = std::make_shared<std::map<int, direct_clip::plane>>(std::initializer_list<
+                std::pair<const int, direct_clip::plane>>{
                 {boundary_box_plane_base + 0, {{1, 0, 0}, hi.x}},
                 {boundary_box_plane_base + 1, {{-1, 0, 0}, -lo.x}},
                 {boundary_box_plane_base + 2, {{0, 1, 0}, hi.y}},
                 {boundary_box_plane_base + 3, {{0, -1, 0}, -lo.y}},
                 {boundary_box_plane_base + 4, {{0, 0, 1}, hi.z}},
                 {boundary_box_plane_base + 5, {{0, 0, -1}, -lo.z}},
-            };
+            });
             for (size_t i = 0; i < out.vertices.size(); i++)
             {
                 const auto &v = out.vertices[i];
@@ -768,6 +769,15 @@ namespace csg
                 for (int plane : poly.incidence[i])
                     faces[plane].push_back(i);
 
+            // In the normal case every true edge is already identified by
+            // two supporting planes.  Build that inexpensive edge set first;
+            // the 2D face reconstruction below is only needed for a face
+            // whose incidence lost one of those supporting IDs.
+            for (size_t i = 0; i < poly.vertices.size(); i++)
+                for (size_t j = i + 1; j < poly.vertices.size(); j++)
+                    if (boundary_edge(poly.incidence[i], poly.incidence[j]))
+                        boundary_add_edge(edges, i, j);
+
             // Rebuild the actual convex boundary of each supporting face in
             // 2D.  This is the equivalent of the edges exposed by
             // scipy.spatial.ConvexHull.simplices in the Python clipper; it
@@ -776,6 +786,22 @@ namespace csg
             {
                 const auto &indices = entry.second;
                 if (indices.size() < 3) continue;
+                bool complete = true;
+                for (size_t index : indices)
+                {
+                    int degree = 0;
+                    for (size_t other : indices)
+                        if (other != index && edges.count(index < other
+                                                         ? boundary_edge_key{index, other}
+                                                         : boundary_edge_key{other, index}))
+                            degree++;
+                    if (degree < 2)
+                    {
+                        complete = false;
+                        break;
+                    }
+                }
+                if (complete) continue;
                 math::vec3v normal{};
                 bool have_normal = false;
                 for (size_t i = 1; i + 1 < indices.size() && !have_normal; i++)
@@ -842,12 +868,6 @@ namespace csg
                     boundary_add_edge(edges, hull[i].index, hull[(i + 1) % hull.size()].index);
             }
 
-            // Incidence edges remain useful when a face is numerically
-            // degenerate and cannot supply a 2D basis.
-            for (size_t i = 0; i < poly.vertices.size(); i++)
-                for (size_t j = i + 1; j < poly.vertices.size(); j++)
-                    if (boundary_edge(poly.incidence[i], poly.incidence[j]))
-                        boundary_add_edge(edges, i, j);
             return edges;
         }
 
@@ -868,7 +888,10 @@ namespace csg
             if (maxv <= boundary_clip_epsilon)
             {
                 auto out = std::make_unique<boundary_poly>(input);
-                out->constraints.emplace(plane_id, plane);
+                if (!out->constraints) out->constraints = std::make_shared<std::map<int, direct_clip::plane>>();
+                if (!out->constraints->count(plane_id))
+                    out->constraints = std::make_shared<std::map<int, direct_clip::plane>>(*out->constraints);
+                (*out->constraints)[plane_id] = plane;
                 for (size_t i = 0; i < out->vertices.size(); i++)
                     if (std::fabs(side[i]) <= boundary_clip_epsilon)
                         out->incidence[i].insert(plane_id);
@@ -880,7 +903,10 @@ namespace csg
             point_list vertices;
             std::vector<std::set<int>> incidence;
             auto constraints = input.constraints;
-            constraints.emplace(plane_id, plane);
+            if (!constraints) constraints = std::make_shared<std::map<int, direct_clip::plane>>();
+            if (!constraints->count(plane_id))
+                constraints = std::make_shared<std::map<int, direct_clip::plane>>(*constraints);
+            (*constraints)[plane_id] = plane;
             const auto hull_edges = boundary_hull_edges(input);
             for (size_t i = 0; i < input.vertices.size(); i++)
             {
@@ -1149,8 +1175,9 @@ namespace csg
                 {
                     const auto &face = brush.hulls[0].faces[f];
                     const auto &p = result.planes[(size_t)face.planenum];
-                    out.constraints.emplace(boundary_source_plane_base + source_index * 1024 + (int)f,
-                                           direct_clip::plane{p.normal, p.dist});
+                    if (!out.constraints) out.constraints = std::make_shared<std::map<int, direct_clip::plane>>();
+                    (*out.constraints)[boundary_source_plane_base + source_index * 1024 + (int)f] =
+                        direct_clip::plane{p.normal, p.dist};
                     if (std::fabs(math::dot(out.vertices[i], p.normal) - p.dist) <= (vec_t)1e-5)
                         out.incidence[i].insert(boundary_source_plane_base + source_index * 1024 + (int)f);
                 }
