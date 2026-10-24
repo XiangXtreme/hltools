@@ -2126,7 +2126,23 @@ namespace csg
             if (entity.entity_num < 0 || entity.entity_num >= (int)result.map.entities.size()
                 || result.map.entities[(size_t)entity.entity_num].num_brushes <= 0)
                 continue;
+
+            // A direct surface tree describes the selected closed surface and
+            // treats everything outside that surface according to its own
+            // terminal contents.  That is the right representation for a
+            // dedicated func_detail/func_wall model, but it cannot replace
+            // worldspawn's ordinary collision tree when the world also owns a
+            // sky shell (or other enclosing brushes).  The global
+            // -cliptype pyboundary/pyexact option used to install such a tree
+            // on model 0 and thereby discarded the world sky collision.  Keep
+            // worldspawn on its normal hull path; an explicitly marked detail
+            // entity remains eligible for the direct surface replacement.
             out.emplace_back();
+            if (entity.entity_num == 0
+                && (options.clip == clip_type::pyboundary
+                    || options.clip == clip_type::pyexact))
+                continue;
+
             direct_clip::model &model = out.back();
             bool any = false, all = true;
             bool boundary_mode = options.clip == clip_type::pyboundary;
