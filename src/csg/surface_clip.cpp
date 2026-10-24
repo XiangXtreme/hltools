@@ -1240,11 +1240,12 @@ namespace csg
         }
 
         std::vector<std::unique_ptr<boundary_poly>> boundary_outside_parts(
-            const boundary_poly &volume, const std::vector<direct_clip::plane> &planes,
+            boundary_poly volume, const std::vector<direct_clip::plane> &planes,
             int plane_base)
         {
             std::vector<std::unique_ptr<boundary_poly>> outside;
-            std::unique_ptr<boundary_poly> remaining = std::make_unique<boundary_poly>(volume);
+            outside.reserve(planes.size());
+            std::unique_ptr<boundary_poly> remaining = std::make_unique<boundary_poly>(std::move(volume));
             for (size_t i = 0; i < planes.size() && remaining; i++)
             {
                 vec_t minv = std::numeric_limits<vec_t>::max();
@@ -1280,14 +1281,15 @@ namespace csg
             for (size_t brush = 0; brush < source.size() && !remaining.empty(); brush++)
             {
                 std::vector<std::unique_ptr<boundary_poly>> next;
-                for (const auto &piece : remaining)
+                next.reserve(remaining.size());
+                for (auto &piece : remaining)
                 {
                     if (piece->bounds.disjoint(source[brush].bounds))
                     {
-                        next.push_back(std::make_unique<boundary_poly>(*piece));
+                        next.push_back(std::move(piece));
                         continue;
                     }
-                    auto parts = boundary_outside_parts(*piece, source[brush].planes,
+                    auto parts = boundary_outside_parts(std::move(*piece), source[brush].planes,
                                                         boundary_envelope_plane_base + (int)brush * 1024);
                     for (auto &part : parts) next.push_back(std::move(part));
                 }

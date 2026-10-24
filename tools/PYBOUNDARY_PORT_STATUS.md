@@ -35,4 +35,6 @@ bin/hltools.exe compile -threads 2 -cliptype pyboundary build/tmp/untitledx_pybo
 
 ## 后续工作
 
-当前 C++ 已移植 Python `compose_source()` 的自适应流程，并在每次裁剪后按支撑半空间重建凸包顶点，避免共面/内部交点造成内存爆炸。约束表采用写时复制，普通多面体优先使用 incidence 边，减少 source subtraction 的重复开销。`untitledx` 完整 CSG/BSP/VIS/RAD 编译成功，耗时 61.7 秒，最终 7,981 个 clipnodes（32,767 上限的 24.4%）；193/193 项测试通过。
+当前 C++ 已移植 Python `compose_source()` 的自适应流程，并在每次裁剪后按支撑半空间重建凸包顶点，避免共面/内部交点造成内存爆炸。约束表采用写时复制，普通多面体优先使用 incidence 边；source subtraction 的 disjoint fragment 和裁剪输入改用移动语义，减少顶点/incidence 的重复深拷贝。
+
+最新验证：`untitledx` 的 CSG 阶段耗时约 28.5 秒，完整 CSG/BSP/VIS/RAD 编译耗时约 33.3 秒；最终仍为 7,981 个 clipnodes（32,767 上限的 24.4%）、hull1/hull3 为 4,014/3,967，几何统计与前一版一致。193/193 项测试通过。
