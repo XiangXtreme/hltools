@@ -53,6 +53,19 @@ namespace csg
             plane_mask used;
         };
 
+        struct fragment_split_scratch
+        {
+            std::vector<vec_t> side;
+            point_list cuts;
+            std::vector<fragment::plane_mask> cut_incidence;
+        };
+
+        struct build_tree_scratch
+        {
+            std::vector<int> plane_marks;
+            int generation = 0;
+        };
+
         using fragment_plane_mask = fragment::plane_mask;
 
         void fragment_mask_set(fragment_plane_mask &mask, int plane)
@@ -619,9 +632,11 @@ namespace csg
         }
 
         std::pair<std::unique_ptr<fragment>, std::unique_ptr<fragment>>
-        split_fragment(const fragment &input, int pid, const direct_clip::plane &plane)
+        split_fragment(const fragment &input, int pid, const direct_clip::plane &plane,
+                       fragment_split_scratch &scratch)
         {
-            std::vector<vec_t> side(input.vertices.size());
+            auto &side = scratch.side;
+            side.resize(input.vertices.size());
             vec_t minv = std::numeric_limits<vec_t>::max();
             vec_t maxv = -std::numeric_limits<vec_t>::max();
             for (size_t i = 0; i < side.size(); i++)
@@ -639,8 +654,10 @@ namespace csg
                 return {std::move(copy), nullptr};
             }
 
-            point_list cuts;
-            std::vector<fragment_plane_mask> cut_incidence;
+            auto &cuts = scratch.cuts;
+            auto &cut_incidence = scratch.cut_incidence;
+            cuts.clear();
+            cut_incidence.clear();
             for (size_t i = 0; i < input.vertices.size(); i++)
                 if (side[i] < -fragment_epsilon)
                     for (size_t j = 0; j < input.vertices.size(); j++)
@@ -696,7 +713,8 @@ namespace csg
         }
 
         int build_tree(std::vector<fragment> fragments, plane_table &planes,
-                       std::vector<direct_clip::node> &nodes, int depth = 0)
+                       std::vector<direct_clip::node> &nodes,
+                       build_tree_scratch &scratch, int depth = 0)
         {
             if (fragments.empty()) return -1;
             if (depth > 4096)
@@ -705,7 +723,13 @@ namespace csg
                 if (fragment_mask_contains(f.used, f.sides)) return -2;
 
             std::vector<int> candidates;
-            std::vector<uint8_t> candidate_seen(planes.values.size(), 0);
+            if (scratch.plane_marks.size() != planes.values.size())
+                scratch.plane_marks.assign(planes.values.size(), 0);
+            if (++scratch.generation == std::numeric_limits<int>::max())
+            {
+                std::fill(scratch.plane_marks.begin(), scratch.plane_marks.end(), 0);
+                scratch.generation = 1;
+            }
             for (const auto &f : fragments)
                 for (size_t word_index = 0; word_index < f.sides.size(); word_index++)
                 {
@@ -714,9 +738,10 @@ namespace csg
                     while (bits)
                     {
                         const int plane = (int)(word_index * 64 + fragment_mask_first_bit(bits));
-                        if (plane < (int)candidate_seen.size() && !candidate_seen[(size_t)plane])
+                        if (plane < (int)scratch.plane_marks.size()
+                            && scratch.plane_marks[(size_t)plane] != scratch.generation)
                         {
-                            candidate_seen[(size_t)plane] = 1;
+                            scratch.plane_marks[(size_t)plane] = scratch.generation;
                             candidates.push_back(plane);
                         }
                         bits &= bits - 1;
@@ -735,6 +760,7 @@ namespace csg
 
             int best = -1;
             int best_score = std::numeric_limits<int>::max();
+            int best_front_count = 0, best_back_count = 0, best_cut_count = 0;
             for (int pid : candidates)
             {
                 int front = 0, back = 0, cut = 0;
@@ -753,14 +779,24 @@ namespace csg
                     else cut++;
                 }
                 int score = 5 * cut + std::abs(front - back);
-                if (score < best_score) { best_score = score; best = pid; }
+                if (score < best_score)
+                {
+                    best_score = score;
+                    best = pid;
+                    best_front_count = front;
+                    best_back_count = back;
+                    best_cut_count = cut;
+                }
             }
 
             std::vector<fragment> front, back;
+            front.reserve((size_t)best_front_count + (size_t)best_cut_count);
+            back.reserve((size_t)best_back_count + (size_t)best_cut_count);
+            fragment_split_scratch split_scratch;
             const auto &p = planes.values[(size_t)best];
             for (const auto &f : fragments)
             {
-                auto split = split_fragment(f, best, p);
+                auto split = split_fragment(f, best, p, split_scratch);
                 if (split.first) front.push_back(std::move(*split.first));
                 if (split.second) back.push_back(std::move(*split.second));
             }
@@ -768,8 +804,8 @@ namespace csg
             if (nodes.size() >= 500000)
                 err::fatal("pyexact: fragment BSP exceeded the internal node budget (fragments=%zu, depth=%d)", fragments.size(), depth);
             nodes.push_back({best, -1, -1});
-            nodes[(size_t)index].front = build_tree(std::move(front), planes, nodes, depth + 1);
-            nodes[(size_t)index].back = build_tree(std::move(back), planes, nodes, depth + 1);
+            nodes[(size_t)index].front = build_tree(std::move(front), planes, nodes, scratch, depth + 1);
+            nodes[(size_t)index].back = build_tree(std::move(back), planes, nodes, scratch, depth + 1);
             return index;
         }
 
@@ -1944,7 +1980,8 @@ namespace csg
             logging::info("pyboundary: %zu terms, %zu active planes, hull half %g %g %g\n",
                           fragments.size(), output_planes.values.size(),
                           (double)half.x, (double)half.y, (double)half.z);
-            tree.head = build_tree(std::move(fragments), output_planes, tree.nodes);
+            build_tree_scratch build_scratch;
+            tree.head = build_tree(std::move(fragments), output_planes, tree.nodes, build_scratch);
             tree.planes = std::move(output_planes.values);
             tree.valid = tree.head >= 0;
             compact_direct_tree(tree);
@@ -1986,7 +2023,8 @@ namespace csg
             fragment_normalize_masks(fragments, planes.values.size());
             logging::info("pyexact: fragment input %zu triangles, %zu planes\n",
                           triangles.size(), planes.values.size());
-            tree.head = build_tree(std::move(fragments), planes, tree.nodes);
+            build_tree_scratch build_scratch;
+            tree.head = build_tree(std::move(fragments), planes, tree.nodes, build_scratch);
             tree.planes = std::move(planes.values);
             tree.valid = tree.head >= 0;
             compact_direct_tree(tree);

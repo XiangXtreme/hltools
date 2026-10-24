@@ -46,6 +46,12 @@ bin/hltools.exe compile -threads 2 -cliptype pyboundary build/tmp/untitledx_pybo
 - 位集版本的节点数略高于纯压缩版本，后续仍需优化 splitter 评分，使节点数和生成时间同时下降。
 - boundary poly 现在缓存自身的 hull-edge 拓扑；同一片段的正反裁剪共享这份缓存。`untitledx` CSG 实测降至约 `12.8s`，完整编译约 `16.1s`，clipnodes 仍为 `5136`，随机 hull 判定仍为 0 差异。
 
+## 2026-10-24 splitter scratch 优化
+
+- `split_fragment()` 现在在每个树节点复用 `side`、cut 顶点和 cut incidence 缓冲；`build_tree()` 复用候选平面 generation 标记数组，并按评分阶段得到的 front/back/cut 数量预留子树容量。
+- 这些改动不改变候选排序、EPS、切割顺序或 compact 规则；`untitledx` 仍生成 hull1/hull3 `2682/2454` direct nodes 和 `5136` final clipnodes。
+- Release 实测完整 `compile -threads 2 -cliptype pyboundary` 约 `16.1～16.3s`；193/193 项测试通过。相对单次运行的差异应以同机重复测量为准。
+
 验证副本：`build/tmp/untitledx_pyboundary.bsp`；上一版纯压缩副本：`build/tmp/untitledx_pyboundary_compacted.bsp`。
 
 最新验证：`untitledx` 的 CSG 阶段约 15～16 秒，完整 CSG/BSP/VIS/RAD 编译耗时约 19.3 秒；最终仍为 7,981 个 clipnodes（32,767 上限的 24.4%）、hull1/hull3 为 4,014/3,967，几何统计与前一版一致。193/193 项测试通过。
