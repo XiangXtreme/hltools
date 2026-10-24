@@ -2162,17 +2162,20 @@ namespace csg
             if (triangles.empty()) continue;
             if (boundary_mode && !exact_mode)
             {
-                // Keep the Python reference route: every exposed exterior
-                // triangle becomes its own expanded convex fragment, and the
-                // fragments are composed by the fragment BSP.  Replacing
-                // this with whole-entity convex terms changes the contact
-                // surface at concave brush joins and no longer matches
-                // untitledx_pyboundary.bsp.
-                auto hull1 = std::async(std::launch::async, [&triangles, &options]() {
-                    return build_hull(triangles, options.hull_size[1][1]);
+                std::vector<const built_brush *> brushes;
+                for (const auto &brush : entity.brushes)
+                    if (brush.pyboundary && brush.contents == content::solid && !brush.skipped
+                        && !brush.hulls[0].faces.empty())
+                        brushes.push_back(&brush);
+                // This is the reference path used by untitledx_pyboundary:
+                // compose the continuous exterior boundary into whole-entity
+                // convex terms, then expand those terms for each player hull.
+                const auto composition = prepare_boundary_composition(triangles, brushes, result);
+                auto hull1 = std::async(std::launch::async, [&composition, &options]() {
+                    return build_boundary_hull(composition, options.hull_size[1][1]);
                 });
-                auto hull3 = std::async(std::launch::async, [&triangles, &options]() {
-                    return build_hull(triangles, options.hull_size[3][1]);
+                auto hull3 = std::async(std::launch::async, [&composition, &options]() {
+                    return build_boundary_hull(composition, options.hull_size[3][1]);
                 });
                 model.hulls[1] = hull1.get();
                 model.hulls[2] = model.hulls[1];

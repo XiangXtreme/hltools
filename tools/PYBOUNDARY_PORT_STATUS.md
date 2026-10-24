@@ -110,3 +110,10 @@ bin/hltools.exe compile -threads 2 -cliptype pyboundary build/tmp/untitledx_pybo
 - `cliptype_sl` 修复版 direct tree：hull1 `146` nodes、hull3 `165` nodes；未压缩树分别为 `473/493`，与 Python fragment 路线的语义一致。
 - 可测试文件：`D:/steam/steamapps/common/Half-Life/cstrike/maps/cliptype_sl_pyboundary_direct.bsp`，原 SDHLT simple `cliptype_sl.bsp` 未覆盖。
 - 同一修改在 `untitledx_pyboundary.map` 上完成：942 个外部三角面，hull1/hull3 压缩后 `7553/7586` direct nodes，最终 `15139` clipnodes，完整编译约 `5.9s`，未触及 32,767 限制。
+
+## 2026-10-24 恢复参考几何路线
+
+- 上述 direct fragment 版本是穿墙诊断实验，不等于 `untitledx_pyboundary.bsp` 的参考形态；它会把同一地形拆成 7553/7586 个节点，体感上偏向 simple。
+- 正式 `pyboundary` 恢复为外部表面提取后执行 `prepare_boundary_composition()`，再用 whole-entity terms 扩张并生成 fragment BSP。
+- `untitledx` 当前恢复为 hull1/hull3 `2406/2501`、总 clipnodes `4907`，与参考 BSP 的 300,000 个随机 hull1 判定差异为 `0`。
+- 轴向负法向规范化和 direct tree 的节点安装修复仍保留，用于避免恢复参考几何后再次出现整面墙穿越。
