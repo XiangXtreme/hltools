@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <future>
+#include <functional>
 #include <limits>
 #include <map>
 #include <memory>
@@ -75,6 +76,93 @@ namespace csg
         {
             std::vector<direct_clip::plane> planes;
             math::bounding_box bounds;
+        };
+
+        // Static broad-phase index for the closed brush assembly.  The
+        // subtraction order remains the original source order, so this only
+        // removes provably disjoint brushes and cannot change the generated
+        // fragments or their floating-point path.
+        class boundary_volume_index
+        {
+            struct node
+            {
+                math::bounding_box bounds;
+                int left = -1;
+                int right = -1;
+                std::vector<int> items;
+            };
+
+            std::vector<math::bounding_box> item_bounds;
+            std::vector<node> nodes;
+
+            int build(std::vector<int> items)
+            {
+                node current;
+                for (int index : items) current.bounds.add(item_bounds[(size_t)index]);
+                const int result = (int)nodes.size();
+                nodes.push_back(std::move(current));
+                if (items.size() <= 8)
+                {
+                    nodes[(size_t)result].items = std::move(items);
+                    return result;
+                }
+
+                math::bounding_box centers;
+                for (int index : items)
+                {
+                    const auto &bounds = item_bounds[(size_t)index];
+                    centers.add((bounds.mins + bounds.maxs) * (vec_t)0.5);
+                }
+                int axis = 0;
+                if (centers.maxs.y - centers.mins.y > centers.maxs.x - centers.mins.x) axis = 1;
+                if (centers.maxs.z - centers.mins.z > centers.maxs[axis] - centers.mins[axis]) axis = 2;
+                std::sort(items.begin(), items.end(), [&](int a, int b) {
+                    const auto &aa = item_bounds[(size_t)a];
+                    const auto &bb = item_bounds[(size_t)b];
+                    return (aa.mins[axis] + aa.maxs[axis]) < (bb.mins[axis] + bb.maxs[axis]);
+                });
+                const size_t middle = items.size() / 2;
+                std::vector<int> left(items.begin(), items.begin() + middle);
+                std::vector<int> right(items.begin() + middle, items.end());
+                nodes[(size_t)result].left = build(std::move(left));
+                nodes[(size_t)result].right = build(std::move(right));
+                return result;
+            }
+
+            void query_node(int node_index, const math::bounding_box &bounds,
+                            std::vector<int> &result) const
+            {
+                const auto &current = nodes[(size_t)node_index];
+                if (current.bounds.disjoint(bounds)) return;
+                if (current.left < 0)
+                {
+                    for (int item : current.items)
+                        if (!item_bounds[(size_t)item].disjoint(bounds)) result.push_back(item);
+                    return;
+                }
+                query_node(current.left, bounds, result);
+                query_node(current.right, bounds, result);
+            }
+
+        public:
+            explicit boundary_volume_index(const std::vector<math::bounding_box> &bounds)
+                : item_bounds(bounds)
+            {
+                if (!item_bounds.empty())
+                {
+                    std::vector<int> items(item_bounds.size());
+                    for (size_t i = 0; i < items.size(); i++) items[i] = (int)i;
+                    build(std::move(items));
+                }
+            }
+
+            std::vector<int> query(const math::bounding_box &bounds) const
+            {
+                std::vector<int> result;
+                if (!nodes.empty()) query_node(0, bounds, result);
+                std::sort(result.begin(), result.end());
+                return result;
+            }
         };
 
         struct boundary_term
@@ -274,6 +362,10 @@ namespace csg
             volumes.reserve(brushes.size());
             for (const built_brush *brush : brushes)
                 volumes.push_back({brush_planes(result, *brush), brush->hulls[0].bounds});
+            std::vector<math::bounding_box> volume_bounds;
+            volume_bounds.reserve(volumes.size());
+            for (const auto &volume : volumes) volume_bounds.push_back(volume.bounds);
+            const boundary_volume_index volume_index(volume_bounds);
 
             std::vector<triangle> triangles;
             for (size_t owner = 0; owner < brushes.size(); owner++)
@@ -286,8 +378,10 @@ namespace csg
                     std::vector<polygon> pieces = {{face.winding.points()}};
                     math::bounding_box face_bounds;
                     for (const auto &p : face.winding.points()) face_bounds.add(p);
-                    for (size_t other = 0; other < volumes.size(); other++)
+                    const auto candidates = volume_index.query(face_bounds);
+                    for (int other_index : candidates)
                     {
+                        const size_t other = (size_t)other_index;
                         if (other == owner || bounds_disjoint(face_bounds, volumes[other].bounds))
                             continue;
                         std::vector<polygon> next;
@@ -589,6 +683,68 @@ namespace csg
             nodes[(size_t)index].front = build_tree(std::move(front), planes, nodes, depth + 1);
             nodes[(size_t)index].back = build_tree(std::move(back), planes, nodes, depth + 1);
             return index;
+        }
+
+        // brushbsp.py compacts its fragment tree before it is spliced into
+        // the final BSP.  The uncompressed recursive builder can reach the
+        // same logical leaf through many paths, especially after adjacent
+        // triangle terms have been split by shared planes.  Fold identical
+        // children and structurally identical subtrees while preserving the
+        // exact plane and front/back semantics.
+        void compact_direct_tree(direct_clip::tree &tree)
+        {
+            if (!tree.valid || tree.head < 0 || tree.nodes.empty()) return;
+
+            std::vector<direct_clip::node> ordered;
+            ordered.reserve(tree.nodes.size());
+            std::map<int, int> memo;
+            std::map<std::tuple<int, int, int>, int> cache;
+            std::set<int> visiting;
+
+            std::function<int(int)> visit = [&](int index) -> int {
+                if (index < 0) return index;
+                if ((size_t)index >= tree.nodes.size())
+                    err::fatal("pyboundary: invalid fragment tree child %d", index);
+                auto known = memo.find(index);
+                if (known != memo.end()) return known->second;
+                if (!visiting.insert(index).second)
+                    err::fatal("pyboundary: cyclic fragment tree at node %d", index);
+                const auto &node = tree.nodes[(size_t)index];
+                const int front = visit(node.front);
+                const int back = visit(node.back);
+                int value;
+                if (front == back)
+                    value = front;
+                else
+                {
+                    const auto key = std::make_tuple(node.plane, front, back);
+                    auto found = cache.find(key);
+                    if (found != cache.end()) value = found->second;
+                    else
+                    {
+                        value = (int)ordered.size();
+                        cache.emplace(key, value);
+                        ordered.push_back({node.plane, front, back});
+                    }
+                }
+                visiting.erase(index);
+                memo.emplace(index, value);
+                return value;
+            };
+
+            const int root = visit(tree.head);
+            auto remap = [&](int index) {
+                return index >= 0 ? (int)ordered.size() - 1 - index : index;
+            };
+            std::vector<direct_clip::node> compacted;
+            compacted.reserve(ordered.size());
+            for (auto it = ordered.rbegin(); it != ordered.rend(); ++it)
+                compacted.push_back({it->plane, remap(it->front), remap(it->back)});
+            const size_t before = tree.nodes.size();
+            tree.nodes = std::move(compacted);
+            tree.head = remap(root);
+            logging::info("pyboundary: compacted direct tree %zu -> %zu nodes\n",
+                          before, tree.nodes.size());
         }
 
         constexpr int boundary_box_plane_base = 1000000;
@@ -1295,12 +1451,15 @@ namespace csg
         }
 
         std::vector<std::unique_ptr<boundary_poly>> boundary_outside_fragments(
-            const boundary_poly &volume, const std::vector<boundary_volume> &source)
+            const boundary_poly &volume, const std::vector<boundary_volume> &source,
+            const boundary_volume_index &source_index)
         {
             std::vector<std::unique_ptr<boundary_poly>> remaining;
             remaining.push_back(std::make_unique<boundary_poly>(volume));
-            for (size_t brush = 0; brush < source.size() && !remaining.empty(); brush++)
+            for (int brush_index : source_index.query(volume.bounds))
             {
+                if (remaining.empty()) break;
+                const size_t brush = (size_t)brush_index;
                 std::vector<std::unique_ptr<boundary_poly>> next;
                 next.reserve(remaining.size());
                 for (auto &piece : remaining)
@@ -1450,6 +1609,10 @@ namespace csg
             std::vector<boundary_poly> pending = source_pieces;
             std::map<std::vector<int>, std::pair<vec_t, math::vec3v>> cache;
             std::map<std::vector<int>, vec_t> accepted;
+            std::vector<math::bounding_box> allowed_bounds;
+            allowed_bounds.reserve(allowed.size());
+            for (const auto &volume : allowed) allowed_bounds.push_back(volume.bounds);
+            const boundary_volume_index allowed_index(allowed_bounds);
             int splits = 0;
             int visited = 0;
             while (!pending.empty())
@@ -1475,7 +1638,7 @@ namespace csg
                 {
                     auto closure = boundary_closure(bounds, planes, members);
                     if (!closure) err::fatal("pyboundary: boundary closure lost a source piece");
-                    auto outside = boundary_outside_fragments(*closure, allowed);
+                    auto outside = boundary_outside_fragments(*closure, allowed, allowed_index);
                     vec_t excess = 0;
                     math::vec3v witness{};
                     vec_t largest = -1;
@@ -1695,6 +1858,7 @@ namespace csg
             tree.head = build_tree(std::move(fragments), output_planes, tree.nodes);
             tree.planes = std::move(output_planes.values);
             tree.valid = tree.head >= 0;
+            compact_direct_tree(tree);
             bool have_bounds = false;
             for (const auto &term : terms)
             {
@@ -1735,6 +1899,7 @@ namespace csg
             tree.head = build_tree(std::move(fragments), planes, tree.nodes);
             tree.planes = std::move(planes.values);
             tree.valid = tree.head >= 0;
+            compact_direct_tree(tree);
             bool have_bounds = false;
             for (const triangle &tri : triangles)
                 for (const auto &v : tri.points)

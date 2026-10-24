@@ -37,4 +37,13 @@ bin/hltools.exe compile -threads 2 -cliptype pyboundary build/tmp/untitledx_pybo
 
 当前 C++ 已移植 Python `compose_source()` 的自适应流程，并在每次裁剪后按支撑半空间重建凸包顶点，避免共面/内部交点造成内存爆炸。约束表采用写时复制，普通多面体优先使用 incidence 边；source subtraction 的 disjoint fragment 和裁剪输入改用移动语义，减少顶点/incidence 的重复深拷贝。hull1/hull3 共享同一个外表面自适应分割拓扑，只分别执行扩张后的 fragment BSP，并行构建两个 hull。自适应分割对每个片段的平面范围只计算一次，同时复用成员判定和候选分割排序；支撑面检查改为无临时数组的直接扫描。新的增量约束缓存会沿 split 继承平面极值，仅在旧极值被切掉时重算。
 
+## 2026-10-24 结构性优化
+
+- source brush envelope 和外表面提取都建立一次静态 BVH；查询结果按原 brush 顺序恢复，只跳过 AABB 已证明不相交的 brush，不改变裁剪顺序。
+- 移植 `brushbsp.py` 的 `compact()`：后序访问树，折叠两个相同子树，并用 `(plane, front, back)` 去重，再反转索引保持父节点先于子节点。
+- `untitledx_pyboundary.map` 的 hull1/hull3 从 `4014/3967` 个直接节点压缩为 `2541/2405`，最终 BSP clipnodes 从 `7981` 降为 `4946`；随机 10,000 点对 hull1/2/3 的旧树和压缩树判定均为 0 差异。
+- 完整 `compile -threads 2 -cliptype pyboundary` 约 20.3 秒，CSG 阶段约 16.0 秒；`ctest` 193/193 通过。
+
+验证副本：`build/tmp/untitledx_pyboundary_compacted.bsp`。
+
 最新验证：`untitledx` 的 CSG 阶段约 15～16 秒，完整 CSG/BSP/VIS/RAD 编译耗时约 19.3 秒；最终仍为 7,981 个 clipnodes（32,767 上限的 24.4%）、hull1/hull3 为 4,014/3,967，几何统计与前一版一致。193/193 项测试通过。
