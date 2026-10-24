@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <future>
 #include <limits>
 #include <map>
 #include <memory>
@@ -70,6 +71,16 @@ namespace csg
         struct boundary_term
         {
             std::vector<int> members;
+        };
+
+        // The adaptive split topology depends on the normalized exterior
+        // surface, but not on the hull expansion.  Keep it once per entity so
+        // hull 1 and hull 3 can reuse the same composition work.
+        struct boundary_composition
+        {
+            std::vector<direct_clip::plane> boundaries;
+            math::bounding_box bounds;
+            std::vector<boundary_term> terms;
         };
 
         struct triangle
@@ -1506,18 +1517,17 @@ namespace csg
             return false;
         }
 
-        direct_clip::tree build_boundary_hull(
+        boundary_composition prepare_boundary_composition(
             const std::vector<triangle> &triangles,
             const std::vector<const built_brush *> &brushes,
-            const csg_result &result,
-            const math::vec3v &half)
+            const csg_result &result)
         {
-            direct_clip::tree tree;
-            if (triangles.empty() || brushes.empty()) return tree;
-            std::vector<direct_clip::plane> boundaries = normalized_boundary_planes(triangles);
-            if (boundaries.empty()) return tree;
+            boundary_composition composition;
+            if (triangles.empty() || brushes.empty()) return composition;
+            composition.boundaries = normalized_boundary_planes(triangles);
+            if (composition.boundaries.empty()) return composition;
 
-            math::bounding_box bounds;
+            math::bounding_box &bounds = composition.bounds;
             for (const auto &tri : triangles)
                 for (const auto &v : tri.points) bounds.add(v);
             bounds.mins -= math::vec3v{100, 100, 100};
@@ -1536,9 +1546,20 @@ namespace csg
                 envelope_bounds.maxs.z += boundary_envelope;
                 allowed.push_back({envelope_planes(*brushes[i], result, (int)i), envelope_bounds});
             }
-            std::vector<boundary_term> terms = compose_boundary_terms(
-                boundaries, bounds, source_pieces, allowed);
-            if (terms.empty()) return tree;
+            composition.terms = compose_boundary_terms(
+                composition.boundaries, bounds, source_pieces, allowed);
+            return composition;
+        }
+
+        direct_clip::tree build_boundary_hull(
+            const boundary_composition &composition,
+            const math::vec3v &half)
+        {
+            direct_clip::tree tree;
+            if (composition.boundaries.empty() || composition.terms.empty()) return tree;
+            const auto &boundaries = composition.boundaries;
+            const auto &bounds = composition.bounds;
+            const auto &terms = composition.terms;
 
             plane_table output_planes;
             std::vector<fragment> fragments;
@@ -1691,11 +1712,16 @@ namespace csg
                         brushes.push_back(&brush);
                 // Every entity uses the whole-entity adaptive composition
                 // path, matching boundary_normalize.py.
-                model.hulls[1] = build_boundary_hull(triangles, brushes, result,
-                                                      options.hull_size[1][1]);
+                const auto composition = prepare_boundary_composition(triangles, brushes, result);
+                auto hull1 = std::async(std::launch::async, [&composition, &options]() {
+                    return build_boundary_hull(composition, options.hull_size[1][1]);
+                });
+                auto hull3 = std::async(std::launch::async, [&composition, &options]() {
+                    return build_boundary_hull(composition, options.hull_size[3][1]);
+                });
+                model.hulls[1] = hull1.get();
                 model.hulls[2] = model.hulls[1];
-                model.hulls[3] = build_boundary_hull(triangles, brushes, result,
-                                                      options.hull_size[3][1]);
+                model.hulls[3] = hull3.get();
             }
             else
             {
