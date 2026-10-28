@@ -101,7 +101,8 @@ namespace tools
                 "  'hltools csg -h', 'bsp -h', 'vis -h', 'rad -h' - plus:\n"
                 "\n"
                 "  -dumpintermediates    write the csg intermediate files to disk\n"
-                "  -noembedsource        do not embed the map source in the BSP\n"
+                "  -embedsource          embed the map source in the BSP (default: off)\n"
+                "  -noembedsource        disable source embedding, overriding -embedsource\n"
                 "  -nochart              skip the bsp usage chart\n"
                 "  -threads <n>          worker threads             (default: all cores)\n"
                 "\n"
@@ -139,7 +140,8 @@ namespace tools
 
         bool dump_intermediates = args.has("-dumpintermediates")
             || args.has("--dump-intermediates");
-        bool embed_source = !args.has("-noembedsource")
+        bool embed_source = (args.has("-embedsource") || args.has("--embed-source"))
+            && !args.has("-noembedsource")
             && !args.has("--no-embed-source");
 
         std::vector<unsigned char> source_bytes;

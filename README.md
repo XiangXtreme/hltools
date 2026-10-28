@@ -94,16 +94,18 @@ The exact luxel totals identify the textures to fix. Page usage can be slightly 
 
 ## Embedded map source
 
-`hltools compile` embeds the editable MAP source in the final BSP by default.
+`hltools compile` does not embed MAP source by default. Add `-embedsource`
+(`--embed-source`) to append the editable MAP source to the final BSP.
 `hltools decompile` can restore it without reconstructing the map:
 
 ```powershell
-hltools compile maps/example.map
+hltools compile -embedsource maps/example.map
 hltools decompile maps/example.bsp restored/example.map
 ```
 
 The archive includes the compile settings and used texture-light definitions.
-GoldSrc ignores the appended ZIP data. Use `-noembedsource` to disable it. When
+GoldSrc ignores the appended ZIP data. `-noembedsource` (`--no-embed-source`)
+disables embedding even when an enable flag is also present. When
 no source is embedded, `decompile` reconstructs the map from the BSP geometry.
 
 ## Building
@@ -287,13 +289,14 @@ Accepts all CSG, BSP, VIS and RAD options, plus:
 | Option | Effect |
 |---|---|
 | `-dumpintermediates` | Write the CSG intermediate files instead of keeping only the memory handoff |
-| `-noembedsource` | Do not append the editable map-source ZIP to the BSP |
+| `-embedsource`, `--embed-source` | Append the editable map-source ZIP to the BSP (default: off) |
+| `-noembedsource`, `--no-embed-source` | Disable source embedding, overriding the enable flags |
 | `-nochart` | Skip the final BSP usage chart |
 | `-threads <n>` | Set the shared worker count; the default uses all cores |
 
 `-onlyents` is intentionally supported only by CSG and is rejected by `hltools compile`.
 
-Map source is embedded by default. The root `source.map` is self-contained:
+When source embedding is enabled, the root `source.map` is self-contained:
 it contains the effective `info_compile_parameters` and only the effective
 `info_texlights` definitions for textures referenced by compiled faces.
 
