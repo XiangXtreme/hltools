@@ -32,6 +32,21 @@ Under development. Bugs, incomplete behavior and output differences may still oc
 
 The CPU compiler stages preserve reference compiler behavior across real maps and feature fixtures. GPU RAD is deliberately approximate; see [Accuracy and compatibility](#accuracy-and-compatibility).
 
+## TrenchBroom projects
+
+`hltools compile` can read a TrenchBroom `.tbproj` directly, so the editor and the
+compiler share one source of truth:
+
+```powershell
+hltools compile --project maps/example.tbproj --map alpha --output build/alpha.bsp
+```
+
+The project is opened read-only (schema 2 and 3). The named map source and the compiled
+texture wads the project owns are extracted to a temporary directory, compiled like any
+other map, and the BSP is copied to `--output` (default: next to the project). Textures
+are embedded in the BSP, matching a normal compile without `-wadtextures`. Classic
+MAP + WAD compiles are unchanged.
+
 ## GPU lighting
 
 GPU accelerated RAD is one of the largest additions. \
@@ -993,19 +1008,21 @@ Each key except `classname` and `origin` is a texture name.
 
 Models resolve against the game directory (the parent of the map's directory), then the map directory, the working directory and each `-waddir` folder. A masked skin lets light through where the sampled palette index is `255`; additive skins never block. `-nostudioshadow` ignores every request.
 
-#### Studio model BSP
+#### Studio model BSP & collision
 
-A point entity carrying `zhlt_studiobsp` is replaced by solid geometry baked from its `model`, so the prop becomes part of the map instead of a runtime model.
+Point entities can be baked into solid BSP geometry (`zhlt_studiobsp 1`), retain their runtime studio model representation while receiving automatically generated invisible player collision submodels (`zhlt_studiobsp 0` or unset, with `zhlt_studiobsp_collision > 0`), or act as collision-only proxies (`zhlt_studiobsp 2`) where the `.mdl` is stripped from the compiled map entirely.
 
 | Entity or key | Effect | Default |
 |---|---|---|
-| `zhlt_studiobsp <0\|1>` | Bakes the entity's `model` into a `func_wall` of five-sided detail brush prisms, one per triangle | `0` |
-| `zhlt_studiobsp_collision <0\|1>` | Builds clip hulls `1..3`; `0` leaves render geometry only | `1` |
+| `zhlt_studiobsp <0\|1\|2>` | `0` = Keep runtime MDL (if collision enabled, spawns companion invisible `func_wall`). `1` = Bakes visible `func_wall` detail brush prisms (1 per triangle), stripping `.mdl`. `2` = Collision-only proxy: entity becomes an invisible `func_wall` (`zhlt_collision_only 1`); `.mdl` is not rendered or referenced in the final BSP. | `0` |
+| `zhlt_studiobsp_collision <0\|1\|2\|3>` | Collision hulls `1..3`: `0` = no collision, `1` = standard CSG brush expansion, `2` = ExactHull (Minkowski sum with player box, smooth simple distance), `3` = ExactHull + Legacytrim (smooth, slope-hugging contact distance). Defaults to `2` if `zhlt_studiobsp 2` is set without collision mode. | `1` |
 | `zhlt_studiobsp_doublesided <0\|1>` | Accepted for compatibility; brush prisms are always closed and textured on all five sides | `1` |
 | `zhlt_studiobsp_thickness <n>` | Prism depth in world units, clamped to `0.01..512` | `1` |
-| `zhlt_studiobsp_world <0\|1>` | Adds the prisms to `worldspawn` and turns the marker into `info_null` | `0` |
+| `zhlt_studiobsp_world <0\|1>` | Adds the prisms to `worldspawn` and turns the marker into `info_null` (only valid when `zhlt_studiobsp 1` and collision mode < 2) | `0` |
 
-`body`, `skin`, `scale` and `xform` select the pose and placement exactly like studio shadows. The generated brushes are detail brushes (`detail_level` and `clipnode_detail_level` `1`) and get `zhlt_lightflags` bit `2`, so VIS does not split on them while RAD still treats them as opaque. Every skin is resampled to a legal BSP size (a multiple of `16`, at most `512`), embedded into the miptex lump and named with a unique hash suffix of at most 15 characters; masked skins keep the `{` prefix.
+`body`, `skin`, `scale` and `xform` select the pose and placement exactly like studio shadows. When baking visual geometry (`zhlt_studiobsp 1`), the generated brushes are detail brushes (`detail_level` and `clipnode_detail_level` `1`) and get `zhlt_lightflags` bit `2`, so VIS does not split on them while RAD still treats them as opaque. Every skin is resampled to a legal BSP size (a multiple of `16`, at most `512`), embedded into the miptex lump and named with a unique hash suffix of at most 15 characters; masked skins keep the `{` prefix.
+
+When using collision-only proxy mode (`zhlt_studiobsp 2`) or decoupled collision (`zhlt_studiobsp 0` + `zhlt_studiobsp_collision > 0`), the collision submodel uses `zhlt_collision_only 1`, consuming zero visible BSP faces and zero miptex texture lump budget. In collision-only proxy mode (`2`), the original `.mdl` path is completely eliminated from the map entity lump, so players do not download the model and the engine does not precache it.
 
 Brush baking is meant for props that fit the map's brush, plane and clipnode budgets. Converted geometry counts against all of them: a 900-triangle model produces 900 brushes, 4,500 sides and roughly 10,000 planes, so very dense models should stay runtime entities or use fewer triangles. A model with no embedded skins is rejected with a warning. Triangles thinner than the CSG plane epsilon are inflated inside their own plane to 0.5 world units so heavily downscaled props still produce closed brushes, while degenerate triangles or ones with no usable texture projection are counted and skipped.
 

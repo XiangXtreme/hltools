@@ -1,5 +1,11 @@
 # Third-party notices
 
+## sqlite3
+
+SQLite is in the public domain. The vendored amalgamation under
+`third_party/sqlite` (sqlite3.c, sqlite3.h) is used to read TrenchBroom
+project files without adding a build dependency.
+
 ## libzip
 
 Copyright (C) 1999-2020 Dieter Baron and Thomas Klausner

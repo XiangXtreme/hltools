@@ -2,7 +2,9 @@
 
 #include <chrono>
 #include <cstdio>
+#include <filesystem>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -23,6 +25,7 @@
 #include "../tools/compile_parameters.h"
 #include "../tools/vis_tool.h"
 #include "../tools/rad_tool.h"
+#include "project_input.h"
 
 namespace tools
 {
@@ -113,6 +116,43 @@ namespace tools
 
     int run_compile(int argc, char **argv)
     {
+        // a project compile first materializes the map and texture wads the
+        // project owns, then runs the normal compile on that extracted map
+        if (project_compile_requested(argc, argv))
+        {
+            project_input input;
+            std::string error;
+            if (!expand_project_compile(argc, argv, input, &error))
+                err::fatal("%s", error.c_str());
+
+            std::vector<char *> arguments;
+            arguments.reserve(input.arguments.size());
+            for (std::string &argument : input.arguments)
+                arguments.push_back(argument.data());
+
+            const int result = run_compile((int)arguments.size(), arguments.data());
+            if (result == 0)
+            {
+                std::error_code copy_error;
+                const std::filesystem::path output_path(input.output_path);
+                std::filesystem::create_directories(output_path.parent_path(),
+                                                    copy_error);
+                std::filesystem::copy_file(
+                    input.bsp_path, output_path,
+                    std::filesystem::copy_options::overwrite_existing, copy_error);
+                if (copy_error)
+                {
+                    discard_project_input(input);
+                    err::fatal("could not write '%s': %s",
+                               input.output_path.c_str(),
+                               copy_error.message().c_str());
+                }
+                logging::console("wrote %s\n", input.output_path.c_str());
+            }
+            discard_project_input(input);
+            return result;
+        }
+
         cli::args args(argc, argv);
         const bool want_help = args.has("-h") || args.has("-help") || args.has("--help");
         if (args.empty() || args.map_name().empty() || want_help)

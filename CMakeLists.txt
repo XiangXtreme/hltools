@@ -208,6 +208,27 @@ add_library(hltools_format STATIC
 target_include_directories(hltools_format PUBLIC src)
 target_link_libraries(hltools_format PUBLIC hltools_common zip)
 
+# sqlite3 (vendored, public domain): opens TrenchBroom project catalogs read only
+add_library(hltools_sqlite STATIC third_party/sqlite/sqlite3.c)
+target_include_directories(hltools_sqlite PUBLIC third_party/sqlite)
+target_compile_definitions(hltools_sqlite PRIVATE
+    SQLITE_THREADSAFE=0
+    SQLITE_OMIT_LOAD_EXTENSION
+    SQLITE_OMIT_DEPRECATED
+    SQLITE_DQS=0)
+set_target_properties(hltools_sqlite PROPERTIES EXCLUDE_FROM_ALL TRUE)
+if(MSVC)
+    target_compile_options(hltools_sqlite PRIVATE /w)
+endif()
+
+# TrenchBroom project files: read only asset access for project driven compiles
+add_library(hltools_project STATIC
+    src/format/tbproject/project.cpp
+)
+target_include_directories(hltools_project PUBLIC src)
+target_link_libraries(hltools_project
+    PUBLIC hltools_common hltools_format hltools_sqlite)
+
 # shared compiler option registry consumers and info_compile_parameters
 # resolution for unified and individual stage commands
 add_library(hltools_compile_parameters STATIC
@@ -425,6 +446,7 @@ endif()
 add_executable(hltools
     src/cli/hltools/main.cpp
     src/cli/hltools/compile.cpp
+    src/cli/hltools/project_input.cpp
     src/cli/tools/csg_tool.cpp
     src/cli/tools/bsp_tool.cpp
     src/cli/tools/bsp_port_tool.cpp
@@ -439,7 +461,8 @@ add_executable(hltools
     src/cli/tools/inspect_tool.cpp
 )
 target_link_libraries(hltools PRIVATE hltools_csg hltools_bsp hltools_vis hltools_rad
-    hltools_decompile hltools_port hltools_model hltools_compile_parameters)
+    hltools_decompile hltools_port hltools_model hltools_compile_parameters
+    hltools_project)
 add_hltools_windows_version(hltools "${PROJECT_DESCRIPTION}")
 set_target_properties(hltools PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
 

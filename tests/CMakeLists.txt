@@ -65,6 +65,13 @@ add_hltools_unit(unit_common
     LIBRARIES hltools_common
     LABEL unit.common)
 
+add_hltools_unit(unit_project
+    PREFIX "unit.project."
+    SOURCES
+        unit/format/tbproject.cpp
+    LIBRARIES hltools_project
+    LABEL unit.project)
+
 add_hltools_unit(unit_cli
     PREFIX "unit.cli."
     SOURCES

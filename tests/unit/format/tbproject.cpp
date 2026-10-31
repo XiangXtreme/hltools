@@ -1,0 +1,138 @@
+#include <filesystem>
+#include <fstream>
+#include <stdexcept>
+#include <string>
+#include <system_error>
+#include <vector>
+
+#include <sqlite3.h>
+
+#include "format/tbproject/project.h"
+#include "support/test.h"
+
+namespace
+{
+    struct database
+    {
+        sqlite3 *handle = nullptr;
+
+        ~database()
+        {
+            if (handle)
+                sqlite3_close(handle);
+        }
+    };
+
+    void exec(sqlite3 *handle, const char *sql)
+    {
+        char *message = nullptr;
+        const int rc = sqlite3_exec(handle, sql, nullptr, nullptr, &message);
+        if (rc != SQLITE_OK)
+        {
+            const std::string text = message ? message : "sqlite error";
+            sqlite3_free(message);
+            throw std::runtime_error(text);
+        }
+    }
+
+    std::filesystem::path scratch_directory()
+    {
+        const auto directory =
+            std::filesystem::path(HLTOOLS_TEST_SCRATCH_DIRECTORY) / "unit-project";
+        std::error_code ignored;
+        std::filesystem::remove_all(directory, ignored);
+        std::filesystem::create_directories(directory);
+        return directory;
+    }
+
+    // a project with one map and one compiled texture; schema three adds the
+    // publish_path column that older projects do not have
+    std::filesystem::path write_project(const std::filesystem::path &path,
+                                        const bool schema_three)
+    {
+        database db;
+        require(sqlite3_open(path.string().c_str(), &db.handle) == SQLITE_OK);
+        exec(db.handle, schema_three
+                            ? "PRAGMA application_id=0x5442504a; PRAGMA user_version=3;"
+                            : "PRAGMA application_id=0x5442504a; PRAGMA user_version=2;");
+        exec(db.handle,
+             "CREATE TABLE project(id TEXT PRIMARY KEY,name TEXT NOT NULL,"
+             "game_id TEXT NOT NULL);"
+             "CREATE TABLE content(id TEXT PRIMARY KEY,hash TEXT NOT NULL,"
+             "data BLOB NOT NULL);"
+             "CREATE TABLE revisions(asset_id TEXT NOT NULL,type TEXT NOT NULL,"
+             "virtual_path TEXT NOT NULL,display_name TEXT NOT NULL,"
+             "source_name TEXT NOT NULL,revision INTEGER NOT NULL,recipe TEXT NOT NULL,"
+             "original TEXT NOT NULL,compatible TEXT NOT NULL,"
+             "PRIMARY KEY(asset_id,revision));"
+             "CREATE TABLE heads(asset_id TEXT PRIMARY KEY,revision INTEGER NOT NULL,"
+             "virtual_path TEXT NOT NULL);");
+        if (schema_three)
+            exec(db.handle, "ALTER TABLE revisions ADD COLUMN publish_path TEXT NOT NULL "
+                            "DEFAULT '';");
+        exec(db.handle,
+             "INSERT INTO project VALUES('p1','Test project','Half-Life');"
+             "INSERT INTO content VALUES('cm','hm',X'2f2f206d6170'),"
+             "('ct','ht',X'57414433');");
+        exec(db.handle,
+             "INSERT INTO revisions(asset_id,type,virtual_path,display_name,"
+             "source_name,revision,recipe,original,compatible)"
+             "VALUES('am','map','maps/alpha.map','alpha','alpha.map',1,'','cm','cm'),"
+             "('at','texture','textures/WALL01.wad','WALL01','WALL01.wad',1,'','ct','ct');"
+             "INSERT INTO heads VALUES('am',1,'maps/alpha.map'),"
+             "('at',1,'textures/WALL01.wad');");
+        if (schema_three)
+            exec(db.handle, "UPDATE revisions SET publish_path=virtual_path;");
+        return path;
+    }
+}
+
+suite("unit.project.tbproject")
+{
+    test("project.reads_maps_and_textures")
+    {
+        const auto path = write_project(scratch_directory() / "alpha.tbproj", true);
+        std::string error;
+        const auto project = format::tbproject::project::open(path.string(), &error);
+        require(project != nullptr);
+        expect(project->name() == "Test project");
+        expect(project->game() == "Half-Life");
+        require(project->assets().size() == 2);
+
+        require(project->find_map("alpha") != nullptr);
+        require(project->find_map("alpha.map") != nullptr);
+        require(project->find_map("maps/alpha.map") != nullptr);
+        expect(project->find_map("beta") == nullptr);
+        expect(project->find_map("alpha")->compatible
+               == std::vector<byte>{'/', '/', ' ', 'm', 'a', 'p'});
+
+        // GoldSrc texture names are case insensitive
+        require(project->find_texture("WALL01") != nullptr);
+        require(project->find_texture("wall01") != nullptr);
+        expect(project->find_texture("WALL01")->compatible
+               == std::vector<byte>{'W', 'A', 'D', '3'});
+    }
+
+    test("project.accepts_schema_two")
+    {
+        const auto path = write_project(scratch_directory() / "legacy.tbproj", false);
+        std::string error;
+        const auto project = format::tbproject::project::open(path.string(), &error);
+        require(project != nullptr);
+        // schema two has no publish path, so the virtual path stands in for it
+        require(project->find_map("alpha") != nullptr);
+        expect(project->find_map("alpha")->publish_path == "maps/alpha.map");
+    }
+
+    test("project.rejects_foreign_files")
+    {
+        const auto path = scratch_directory() / "not-a-project.bin";
+        std::ofstream file(path, std::ios::binary);
+        file << "definitely not sqlite";
+        file.close();
+
+        std::string error;
+        expect(format::tbproject::project::open(path.string(), &error) == nullptr);
+        expect(!error.empty());
+    }
+}
