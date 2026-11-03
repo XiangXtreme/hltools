@@ -32,9 +32,11 @@ namespace format
     }
 
     bool build_lightmap_atlas(const map_data &map, lightmap_atlas &atlas,
-                              std::string *error)
+                              std::string *error, std::vector<lightmap_tile> *tiles_out)
     {
         atlas = lightmap_atlas{};
+        if (tiles_out)
+            tiles_out->clear();
         if (map.lighting.empty())
         {
             set_error(error, "BSP contains no lighting data");
@@ -43,9 +45,12 @@ namespace format
 
         struct pending_tile
         {
+            int face;
+            int style;
             unsigned width;
             unsigned height;
             size_t light_offset;
+            int mins[2];
         };
         std::vector<pending_tile> pending;
         unsigned widest = 0;
@@ -90,7 +95,8 @@ namespace format
                                       + " lightmap is outside the lighting lump");
                     return false;
                 }
-                pending.push_back({width, height, offset});
+                pending.push_back({(int)facenum, slot, width, height, offset,
+                                   {mins[0], mins[1]}});
                 widest = std::max(widest, width);
             }
             atlas.faces++;
@@ -143,6 +149,24 @@ namespace format
             }
         }
         atlas.tiles = (int)tiles.size();
+        if (tiles_out)
+        {
+            tiles_out->reserve(tiles.size());
+            for (size_t i = 0; i < tiles.size(); i++)
+            {
+                const tile &t = tiles[i];
+                lightmap_tile out;
+                out.face = pending[i].face;
+                out.style = pending[i].style;
+                out.x = t.x;
+                out.y = t.y;
+                out.width = t.width;
+                out.height = t.height;
+                out.mins[0] = pending[i].mins[0];
+                out.mins[1] = pending[i].mins[1];
+                tiles_out->push_back(out);
+            }
+        }
         return true;
     }
 }

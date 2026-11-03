@@ -377,14 +377,26 @@ if(HLTOOLS_GPU)
 endif()
 
 if(HLTOOLS_GPU)
-    set(FETCHCONTENT_BASE_DIR "${CMAKE_BINARY_DIR}/_extern")
-    FetchContent_Declare(
-        vulkan_headers
-        GIT_REPOSITORY https://github.com/KhronosGroup/Vulkan-Headers.git
-        GIT_TAG b379292b2ab6df5771ba9870d53cf8b2c9295daf
-        GIT_SHALLOW FALSE
-    )
-    FetchContent_MakeAvailable(vulkan_headers)
+    # Prefer the installed Vulkan SDK's headers so a gpu build needs no network
+    # access; only fetch the Khronos header repo when no SDK is installed.
+    find_path(VULKAN_HEADERS_INCLUDE_DIR vulkan/vulkan.h
+        HINTS "$ENV{VULKAN_SDK}/Include" "$ENV{VULKAN_SDK}/include")
+    if(VULKAN_HEADERS_INCLUDE_DIR AND NOT TARGET Vulkan::Headers)
+        add_library(hltools_vulkan_headers INTERFACE)
+        target_include_directories(hltools_vulkan_headers INTERFACE
+            "${VULKAN_HEADERS_INCLUDE_DIR}")
+        add_library(Vulkan::Headers ALIAS hltools_vulkan_headers)
+        message(STATUS "HLTOOLS_GPU: vulkan headers from ${VULKAN_HEADERS_INCLUDE_DIR}")
+    else()
+        set(FETCHCONTENT_BASE_DIR "${CMAKE_BINARY_DIR}/_extern")
+        FetchContent_Declare(
+            vulkan_headers
+            GIT_REPOSITORY https://github.com/KhronosGroup/Vulkan-Headers.git
+            GIT_TAG b379292b2ab6df5771ba9870d53cf8b2c9295daf
+            GIT_SHALLOW FALSE
+        )
+        FetchContent_MakeAvailable(vulkan_headers)
+    endif()
 
     set(RAD_GPU_GEN_DIR ${CMAKE_BINARY_DIR}/generated/rad_gpu)
     set(RAD_GPU_SHADER_DIR ${CMAKE_SOURCE_DIR}/src/rad/gpu/shaders)
