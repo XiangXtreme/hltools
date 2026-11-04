@@ -85,6 +85,20 @@ namespace
             exec(db.handle, "UPDATE revisions SET publish_path=virtual_path;");
         return path;
     }
+
+    void add_terrain_table(const std::filesystem::path &path, const char *row)
+    {
+        database db;
+        require(sqlite3_open(path.string().c_str(), &db.handle) == SQLITE_OK);
+        exec(db.handle,
+             "PRAGMA user_version=4;"
+             "CREATE TABLE terrain_compile(asset_id TEXT PRIMARY KEY,"
+             "source_revision INTEGER NOT NULL,generator_version INTEGER NOT NULL,"
+             "top_faces INTEGER NOT NULL,map BLOB NOT NULL,wad BLOB NOT NULL,"
+             "error TEXT NOT NULL);");
+        if (row)
+            exec(db.handle, row);
+    }
 }
 
 suite("unit.project.tbproject")
@@ -100,6 +114,8 @@ suite("unit.project.tbproject")
         require(project->assets().size() == 2);
 
         require(project->find_map("alpha") != nullptr);
+        expect(project->find_map("alpha")->id == "am");
+        expect(project->find_map("alpha")->revision == 1);
         require(project->find_map("alpha.map") != nullptr);
         require(project->find_map("maps/alpha.map") != nullptr);
         expect(project->find_map("beta") == nullptr);
@@ -134,5 +150,61 @@ suite("unit.project.tbproject")
         std::string error;
         expect(format::tbproject::project::open(path.string(), &error) == nullptr);
         expect(!error.empty());
+    }
+
+    test("project.terrain_requires_current_successful_cache")
+    {
+        const auto directory = scratch_directory();
+        struct scenario
+        {
+            const char *name;
+            const char *row;
+            const char *expected_error;
+        };
+        const scenario scenarios[] = {
+            {"valid", "INSERT INTO terrain_compile VALUES"
+                      "('am',1,1,2,X'6d6170',X'57414433','');", ""},
+            {"missing", nullptr, "missing"},
+            {"stale", "INSERT INTO terrain_compile VALUES"
+                      "('am',2,1,2,X'6d6170',X'57414433','');", "outdated"},
+            {"failed", "INSERT INTO terrain_compile VALUES"
+                       "('am',1,1,0,X'',X'','bad surface');", "bad surface"},
+            {"incomplete", "INSERT INTO terrain_compile VALUES"
+                           "('am',1,1,0,X'',X'57414433','');", "incomplete"},
+        };
+        for (const auto &scenario : scenarios)
+        {
+            const auto path = write_project(directory / (std::string(scenario.name)
+                                                          + ".tbproj"), true);
+            add_terrain_table(path, scenario.row);
+            std::string error;
+            const auto project = format::tbproject::project::open(path.string(), &error);
+            require(project != nullptr);
+            const auto *map = project->find_map("alpha");
+            require(map != nullptr);
+            format::tbproject::terrain_compile output;
+            const bool ok = project->read_terrain_compile(*map, output, &error);
+            if (*scenario.expected_error == '\0')
+            {
+                expect(ok);
+                expect(output.map == std::vector<byte>{'m', 'a', 'p'});
+                expect(output.wad == std::vector<byte>{'W', 'A', 'D', '3'});
+            }
+            else
+            {
+                expect(!ok);
+                expect(error.find(scenario.expected_error) != std::string::npos);
+            }
+        }
+
+        const auto legacy_path = write_project(directory / "legacy-terrain.tbproj", true);
+        std::string error;
+        const auto legacy = format::tbproject::project::open(legacy_path.string(), &error);
+        require(legacy != nullptr);
+        const auto *map = legacy->find_map("alpha");
+        require(map != nullptr);
+        format::tbproject::terrain_compile output;
+        expect(!legacy->read_terrain_compile(*map, output, &error));
+        expect(error.find("missing") != std::string::npos);
     }
 }

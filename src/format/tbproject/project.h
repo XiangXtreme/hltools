@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -10,17 +11,25 @@
 //
 // A project is a SQLite database. The compiler only needs what a map references,
 // so this exposes the map source and the compiled texture wads and nothing else.
-// Schema versions 2 and 3 are accepted; the database is always opened read only
+// Schema versions 1 through 4 are accepted; the database is always opened read only
 // so an editor that is still running keeps ownership of the file.
 namespace format::tbproject
 {
     struct asset
     {
+        std::string id;
+        std::uint64_t revision = 0;
         std::string type;
         std::string virtual_path;
         std::string publish_path;
         std::string display_name;
         std::vector<byte> compatible;
+    };
+
+    struct terrain_compile
+    {
+        std::vector<byte> map;
+        std::vector<byte> wad;
     };
 
     class project
@@ -50,12 +59,17 @@ namespace format::tbproject
         // Finds a compiled texture by its engine facing name.
         const asset *find_texture(const std::string &name) const;
 
+        // Only use terrain output generated for this exact saved map revision.
+        bool read_terrain_compile(const asset &map, terrain_compile &out,
+                                  std::string *error) const;
+
     private:
         struct database;
         project() = default;
 
         std::string name_;
         std::string game_;
+        int schema_ = 0;
         std::vector<asset> assets_;
         std::unique_ptr<database> database_;
     };

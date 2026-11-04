@@ -41,11 +41,16 @@ compiler share one source of truth:
 hltools compile --project maps/example.tbproj --map alpha --output build/alpha.bsp
 ```
 
-The project is opened read-only (schema 2 and 3). The named map source and the compiled
+The project is opened read-only (schema 1 through 4). The named map source and the compiled
 texture wads the project owns are extracted to a temporary directory, compiled like any
 other map, and the BSP is copied to `--output` (default: next to the project). Textures
 are embedded in the BSP, matching a normal compile without `-wadtextures`. Classic
 MAP + WAD compiles are unchanged.
+
+For painted terrain, a current TrenchBroom saves derived compile data for the exact map
+revision inside the project. The compiler uses that geometry and its generated textures
+automatically. If the terrain data is missing, outdated, or failed to generate, open and
+save the project in a current TrenchBroom and resolve any reported terrain error.
 
 ## GPU lighting
 

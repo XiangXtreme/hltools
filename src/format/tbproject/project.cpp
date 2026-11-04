@@ -13,7 +13,7 @@ namespace format::tbproject
     {
         constexpr int project_application_id = 0x5442504a;
         constexpr int oldest_schema = 1;
-        constexpr int newest_schema = 3;
+        constexpr int newest_schema = 4;
 
         std::string lower(std::string text)
         {
@@ -103,6 +103,12 @@ namespace format::tbproject
             return nullptr;
         }
         sqlite3_busy_timeout(handle->handle, 2000);
+        // Keep the asset heads and terrain cache on the same SQLite snapshot.
+        if (sqlite3_exec(handle->handle, "BEGIN", nullptr, nullptr, nullptr) != SQLITE_OK)
+        {
+            set_error(handle->handle, error, "could not read project snapshot");
+            return nullptr;
+        }
 
         int application_id = 0;
         if (!query_int(handle->handle, "PRAGMA application_id", application_id)
@@ -127,6 +133,7 @@ namespace format::tbproject
 
         auto result = std::unique_ptr<project>(new project());
         result->database_ = std::move(handle);
+        result->schema_ = schema;
 
         // schema 3 learned a separate publish path; older projects published under
         // their virtual path
@@ -134,7 +141,7 @@ namespace format::tbproject
             schema >= 3 ? "r.publish_path" : "r.virtual_path";
         const std::string asset_query =
             "SELECT r.type, r.virtual_path, " + publish_column
-            + ", r.display_name, c.data FROM heads h "
+            + ", r.display_name, c.data, r.asset_id, r.revision FROM heads h "
               "JOIN revisions r ON r.asset_id = h.asset_id AND r.revision = h.revision "
               "JOIN content c ON c.id = r.compatible";
 
@@ -145,7 +152,8 @@ namespace format::tbproject
             set_error(result->database_->handle, error, "could not read project assets");
             return nullptr;
         }
-        while (sqlite3_step(statement) == SQLITE_ROW)
+        int step = SQLITE_OK;
+        while ((step = sqlite3_step(statement)) == SQLITE_ROW)
         {
             asset entry;
             entry.type = column_text(statement, 0);
@@ -153,7 +161,23 @@ namespace format::tbproject
             entry.publish_path = column_text(statement, 2);
             entry.display_name = column_text(statement, 3);
             entry.compatible = column_blob(statement, 4);
+            entry.id = column_text(statement, 5);
+            const sqlite3_int64 revision = sqlite3_column_int64(statement, 6);
+            if (entry.id.empty() || revision <= 0)
+            {
+                sqlite3_finalize(statement);
+                if (error)
+                    *error = "project contains an invalid asset revision";
+                return nullptr;
+            }
+            entry.revision = static_cast<std::uint64_t>(revision);
             result->assets_.push_back(std::move(entry));
+        }
+        if (step != SQLITE_DONE)
+        {
+            set_error(result->database_->handle, error, "could not read project assets");
+            sqlite3_finalize(statement);
+            return nullptr;
         }
         sqlite3_finalize(statement);
 
@@ -200,5 +224,78 @@ namespace format::tbproject
                 return &entry;
         }
         return nullptr;
+    }
+
+    bool project::read_terrain_compile(const asset &map, terrain_compile &out,
+                                       std::string *error) const
+    {
+        const std::string instructions =
+            "open and save this project with an up-to-date TrenchBroom";
+        if (schema_ < 4)
+        {
+            if (error)
+                *error = "terrain compile data is missing; " + instructions;
+            return false;
+        }
+
+        sqlite3_stmt *statement = nullptr;
+        if (sqlite3_prepare_v2(database_->handle,
+                               "SELECT source_revision,generator_version,map,wad,error "
+                               "FROM terrain_compile WHERE asset_id=?", -1,
+                               &statement, nullptr) != SQLITE_OK)
+        {
+            set_error(database_->handle, error, "could not read terrain compile data");
+            return false;
+        }
+        if (sqlite3_bind_text(statement, 1, map.id.c_str(), -1, SQLITE_TRANSIENT)
+            != SQLITE_OK)
+        {
+            set_error(database_->handle, error, "could not read terrain compile data");
+            sqlite3_finalize(statement);
+            return false;
+        }
+        const int rc = sqlite3_step(statement);
+        if (rc == SQLITE_DONE)
+        {
+            sqlite3_finalize(statement);
+            if (error)
+                *error = "terrain compile data is missing; " + instructions;
+            return false;
+        }
+        if (rc != SQLITE_ROW)
+        {
+            set_error(database_->handle, error, "could not read terrain compile data");
+            sqlite3_finalize(statement);
+            return false;
+        }
+        const sqlite3_int64 revision = sqlite3_column_int64(statement, 0);
+        const sqlite3_int64 generator = sqlite3_column_int64(statement, 1);
+        auto compiled_map = column_blob(statement, 2);
+        auto compiled_wad = column_blob(statement, 3);
+        const std::string problem = column_text(statement, 4);
+        sqlite3_finalize(statement);
+
+        if (revision <= 0 || static_cast<std::uint64_t>(revision) != map.revision
+            || generator <= 0)
+        {
+            if (error)
+                *error = "terrain compile data is outdated; " + instructions;
+            return false;
+        }
+        if (!problem.empty())
+        {
+            if (error)
+                *error = "terrain could not be prepared: " + problem;
+            return false;
+        }
+        if (compiled_map.empty() || compiled_wad.empty())
+        {
+            if (error)
+                *error = "terrain compile data is incomplete; " + instructions;
+            return false;
+        }
+        out.map = std::move(compiled_map);
+        out.wad = std::move(compiled_wad);
+        return true;
     }
 }

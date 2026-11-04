@@ -76,7 +76,9 @@ add_hltools_unit(unit_cli
     PREFIX "unit.cli."
     SOURCES
         unit/cli/compile_parameters.cpp
-    LIBRARIES hltools_compile_parameters
+        unit/cli/project_input.cpp
+        ${CMAKE_SOURCE_DIR}/src/cli/hltools/project_input.cpp
+    LIBRARIES hltools_compile_parameters hltools_project
     LABEL unit.cli)
 
 add_hltools_unit(unit_format

@@ -8,6 +8,7 @@
 
 #include "common/filesystem.h"
 #include "format/tbproject/project.h"
+#include "format/wad/archive.h"
 
 namespace tools
 {
@@ -63,6 +64,13 @@ namespace tools
             return data.size() >= 4
                 && data[0] == (byte)magic[0] && data[1] == (byte)magic[1]
                 && data[2] == (byte)magic[2] && data[3] == (byte)magic[3];
+        }
+
+        bool has_terrain_paint(const std::vector<byte> &data)
+        {
+            constexpr char marker[] = "\"_tb_terrain_paint\"";
+            return std::search(data.begin(), data.end(), marker,
+                               marker + sizeof(marker) - 1) != data.end();
         }
 
         std::string unique_directory()
@@ -136,6 +144,19 @@ namespace tools
             return false;
         }
 
+        format::tbproject::terrain_compile terrain;
+        const bool painted_terrain = has_terrain_paint(map->compatible);
+        if (painted_terrain && !project->read_terrain_compile(*map, terrain, error))
+            return false;
+        if (painted_terrain
+            && (!has_magic(terrain.wad, "WAD3") || has_terrain_paint(terrain.map)))
+        {
+            if (error)
+                *error = "invalid terrain compile data; open and save this project "
+                         "with an up-to-date TrenchBroom";
+            return false;
+        }
+
         const std::string map_stem =
             std::filesystem::path(map->virtual_path).stem().string();
         const std::string map_file = map_stem.empty() ? std::string("map") : map_stem;
@@ -153,9 +174,9 @@ namespace tools
             (std::filesystem::path(input.working_directory)
              / (map_file + ".map"))
                 .string();
-        if (map->compatible.empty()
-            || !fs::write_all(map_path, map->compatible.data(),
-                              map->compatible.size()))
+        const auto &map_source = painted_terrain ? terrain.map : map->compatible;
+        if (map_source.empty()
+            || !fs::write_all(map_path, map_source.data(), map_source.size()))
         {
             if (error)
                 *error = "could not write the map source extracted from the project";
@@ -163,6 +184,21 @@ namespace tools
         }
 
         std::string wad_list;
+        format::wad_archive generated_wad;
+        if (painted_terrain)
+        {
+            const std::string wad_path =
+                (std::filesystem::path(input.working_directory) / "terrain-generated.wad")
+                    .string();
+            if (!fs::write_all(wad_path, terrain.wad.data(), terrain.wad.size())
+                || !generated_wad.load(wad_path, error))
+            {
+                if (error && error->empty())
+                    *error = "could not extract terrain textures from the project";
+                return false;
+            }
+            wad_list += wad_path + "\n";
+        }
         int texture_index = 0;
         for (const auto &entry : project->assets())
         {
@@ -187,6 +223,32 @@ namespace tools
                 if (error)
                     *error = "could not write texture wad " + wad_path;
                 return false;
+            }
+            if (painted_terrain)
+            {
+                format::wad_archive asset_wad;
+                std::string wad_error;
+                if (!asset_wad.load(wad_path, &wad_error))
+                {
+                    if (error)
+                        *error = "could not read texture '" + entry.display_name
+                            + "': " + wad_error;
+                    return false;
+                }
+                for (const auto &lump : generated_wad.lumps())
+                {
+                    if (asset_wad.find_texture(lump.name))
+                    {
+                        if (error)
+                            *error = "generated terrain texture conflicts with project "
+                                     "texture: "
+                                + std::string(lump.name,
+                                              std::find(lump.name,
+                                                        lump.name + format::max_wad_name,
+                                                        '\0'));
+                        return false;
+                    }
+                }
             }
             wad_list += wad_path + "\n";
         }
