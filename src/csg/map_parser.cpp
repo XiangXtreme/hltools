@@ -77,6 +77,21 @@ namespace csg
                 tx_command_ = 0;
             }
 
+            char peek_char(bool crossline = false)
+            {
+                size_t p = pos_;
+                while (p < text_.size())
+                {
+                    unsigned char c = (unsigned char)text_[p];
+                    if (!(c <= 32 && c < 128))
+                        return (char)c;
+                    p++;
+                    if (c == '\n' && !crossline)
+                        return 0;
+                }
+                return 0;
+            }
+
         private:
             void skip_space(bool crossline)
             {
@@ -349,6 +364,9 @@ namespace csg
                 std::string texture = upper_token(reader.token());
                 apply_tool_texture_flags(texture, brush, side);
                 str::copy(side.texture.name, sizeof(side.texture.name), texture.c_str());
+
+                if (map.map_file_version < 220 && reader.peek_char(false) == '[')
+                    map.map_file_version = 220;
 
                 if (map.map_file_version < 220)
                     parse_legacy_texture(reader, side);
