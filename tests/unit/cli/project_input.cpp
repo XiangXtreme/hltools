@@ -1,3 +1,4 @@
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <stdexcept>
@@ -40,9 +41,9 @@ namespace
     {
         std::filesystem::path root;
         std::filesystem::path project;
-        const std::string compiled_map = "// compiled terrain\n";
+        const std::string compiled_map = "// compiled terrain uses __TB_empty\n";
 
-        explicit fixture(const bool conflict)
+        explicit fixture(const bool conflict, const char *texture_name = "BASE")
         {
             root = std::filesystem::path(HLTOOLS_TEST_SCRATCH_DIRECTORY)
                 / ("project-input-" + std::to_string(
@@ -57,7 +58,7 @@ namespace
             format::mip_texture base_texture;
             std::string error;
             require(format::build_mip_texture("TBT0_0", image, terrain_texture, &error));
-            require(format::build_mip_texture(conflict ? "tbt0_0" : "BASE", image,
+            require(format::build_mip_texture(conflict ? "tbt0_0" : texture_name, image,
                                               base_texture, &error));
             const auto terrain_path = root / "generated.wad";
             const auto base_path = root / "base.wad";
@@ -146,9 +147,96 @@ suite("unit.cli.project_input")
             const std::string list(config.begin(), config.end());
             const auto terrain_pos = list.find("terrain-generated.wad");
             const auto base_pos = list.find("BASE.wad");
+            const auto fallback_pos = list.find("tb-empty.wad");
             require(terrain_pos != std::string::npos);
             require(base_pos != std::string::npos);
+            require(fallback_pos != std::string::npos);
             expect(terrain_pos < base_pos);
+            expect(base_pos < fallback_pos);
         }
+    }
+
+    test("provides the editor placeholder for terrain and ordinary project maps")
+    {
+        for (const bool painted : {false, true})
+        for (const bool custom_placeholder : {false, true})
+        {
+            // An identically named project texture must remain ahead of the fallback.
+            fixture project(false, custom_placeholder ? "__TB_EMPTY" : "BASE");
+            if (!painted)
+            {
+                sqlite3 *db = nullptr;
+                require(sqlite3_open(project.project.string().c_str(), &db) == SQLITE_OK);
+                const std::string source = "// map using __TB_empty\n";
+                bind_blob(db, "UPDATE content SET data=? WHERE id='map'",
+                          std::vector<byte>(source.begin(), source.end()));
+                sqlite3_close(db);
+            }
+
+            expanded_input input;
+            std::string error;
+            require(expand(project, input, error));
+            const auto root = std::filesystem::path(input.value.working_directory);
+            const auto fallback_path = root / "tb-empty.wad";
+            expect(std::filesystem::exists(fallback_path) == !custom_placeholder);
+            if (!custom_placeholder)
+            {
+                format::wad_archive fallback;
+                require(fallback.load(fallback_path.string(), &error));
+                require(fallback.lumps().size() == 1);
+                const auto *lump = fallback.find_texture("__TB_EMPTY");
+                require(lump != nullptr);
+                format::mip_texture texture;
+                format::indexed_image image;
+                require(format::mip_texture_from_lump(*lump, texture, &error));
+                require(format::decode_mip_image(texture, image, &error));
+                expect(image.width == 32);
+                expect(image.height == 32);
+                expect(image.palette[0] == (std::array<byte, 3>{191, 95, 96}));
+                expect(image.palette[1] == (std::array<byte, 3>{129, 64, 65}));
+                expect(image.pixels[0] == 0);
+                expect(image.pixels[16] == 1);
+                expect(image.pixels[16 * 32] == 1);
+            }
+
+            std::vector<byte> config;
+            require(fs::read_all((root / "wads.cfg").string(), config));
+            const std::string list(config.begin(), config.end());
+            const auto project_wad = (root / "textures" / "BASE.wad").string();
+            format::wad_archive project_archive;
+            require(project_archive.load(project_wad, &error));
+            expect((project_archive.find_texture("__TB_EMPTY") != nullptr)
+                   == custom_placeholder);
+            const auto project_entry = '"' + project_wad + "\"\n";
+            const auto fallback_entry = "include \"" + fallback_path.string() + "\"\n";
+            const auto project_pos = list.find(project_entry);
+            const auto fallback_pos = list.find(fallback_entry);
+            require(project_pos != std::string::npos);
+            if (custom_placeholder)
+                expect(fallback_pos == std::string::npos);
+            else
+            {
+                require(fallback_pos != std::string::npos);
+                expect(project_pos < fallback_pos);
+            }
+            expect((list.find("terrain-generated.wad") != std::string::npos) == painted);
+        }
+    }
+
+    test("does not add an unused editor placeholder")
+    {
+        fixture project(false);
+        sqlite3 *db = nullptr;
+        require(sqlite3_open(project.project.string().c_str(), &db) == SQLITE_OK);
+        const std::string source = "// ordinary map\n";
+        bind_blob(db, "UPDATE content SET data=? WHERE id='map'",
+                  std::vector<byte>(source.begin(), source.end()));
+        sqlite3_close(db);
+
+        expanded_input input;
+        std::string error;
+        require(expand(project, input, error));
+        const auto root = std::filesystem::path(input.value.working_directory);
+        expect_false(std::filesystem::exists(root / "tb-empty.wad"));
     }
 }

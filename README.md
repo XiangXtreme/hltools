@@ -47,6 +47,10 @@ other map, and the BSP is copied to `--output` (default: next to the project). T
 are embedded in the BSP, matching a normal compile without `-wadtextures`. Classic
 MAP + WAD compiles are unchanged.
 
+If the map uses TrenchBroom's `__TB_empty` placeholder and the project does not supply
+it, the compiler automatically embeds the editor's built-in placeholder texture. A
+project-provided texture with that name takes precedence.
+
 For painted terrain, a current TrenchBroom saves derived compile data for the exact map
 revision inside the project. The compiler uses that geometry and its generated textures
 automatically. If the terrain data is missing, outdated, or failed to generate, open and

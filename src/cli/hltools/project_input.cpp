@@ -7,6 +7,8 @@
 #include <system_error>
 
 #include "common/filesystem.h"
+#include "format/bmp/image.h"
+#include "format/miptex/texture.h"
 #include "format/tbproject/project.h"
 #include "format/wad/archive.h"
 
@@ -73,6 +75,16 @@ namespace tools
                                marker + sizeof(marker) - 1) != data.end();
         }
 
+        bool has_empty_texture(const std::vector<byte> &data)
+        {
+            constexpr char marker[] = "__tb_empty";
+            return std::search(data.begin(), data.end(), marker,
+                               marker + sizeof(marker) - 1,
+                               [](byte actual, char expected) {
+                                   return std::tolower(actual) == expected;
+                               }) != data.end();
+        }
+
         std::string unique_directory()
         {
             const auto now = std::chrono::high_resolution_clock::now()
@@ -83,6 +95,48 @@ namespace tools
                     / ("hltools-tbproj-" + std::to_string(now) + "-"
                        + std::to_string(counter++)))
                 .string();
+        }
+
+        bool append_wad_path(std::string &list, const std::string &path,
+                             std::string *error, bool include = false)
+        {
+            // The WAD config parser accepts quoted paths but does not support
+            // escapes inside quotes.
+            if (path.find_first_of("\"\r\n") != std::string::npos)
+            {
+                if (error)
+                    *error = "WAD path cannot be represented in the compiler configuration";
+                return false;
+            }
+            if (include)
+                list += "include ";
+            list += '"' + path + "\"\n";
+            return true;
+        }
+
+        bool write_empty_texture_wad(const std::string &path, std::string *error)
+        {
+            // Match TrenchBroom's built-in __TB_empty checkerboard without
+            // requiring the project to capture the editor's internal asset.
+            format::indexed_image image;
+            image.width = image.height = 32;
+            image.palette[0] = {191, 95, 96};
+            image.palette[1] = {129, 64, 65};
+            image.pixels.resize(32 * 32);
+            for (unsigned y = 0; y < image.height; y++)
+                for (unsigned x = 0; x < image.width; x++)
+                    image.pixels[y * image.width + x] = (byte)((x / 16 + y / 16) % 2);
+
+            format::mip_texture texture;
+            std::string detail;
+            if (!format::build_mip_texture("__TB_empty", image, texture, &detail)
+                || !format::write_wad3(path, {texture}, &detail))
+            {
+                if (error)
+                    *error = "could not prepare the built-in placeholder texture: " + detail;
+                return false;
+            }
+            return true;
         }
 
     }
@@ -185,6 +239,7 @@ namespace tools
 
         std::string wad_list;
         format::wad_archive generated_wad;
+        bool missing_empty = has_empty_texture(map_source);
         if (painted_terrain)
         {
             const std::string wad_path =
@@ -197,7 +252,10 @@ namespace tools
                     *error = "could not extract terrain textures from the project";
                 return false;
             }
-            wad_list += wad_path + "\n";
+            if (!append_wad_path(wad_list, wad_path, error))
+                return false;
+            if (generated_wad.find_texture("__TB_empty"))
+                missing_empty = false;
         }
         int texture_index = 0;
         for (const auto &entry : project->assets())
@@ -224,7 +282,7 @@ namespace tools
                     *error = "could not write texture wad " + wad_path;
                 return false;
             }
-            if (painted_terrain)
+            if (painted_terrain || missing_empty)
             {
                 format::wad_archive asset_wad;
                 std::string wad_error;
@@ -235,6 +293,8 @@ namespace tools
                             + "': " + wad_error;
                     return false;
                 }
+                if (asset_wad.find_texture("__TB_empty"))
+                    missing_empty = false;
                 for (const auto &lump : generated_wad.lumps())
                 {
                     if (asset_wad.find_texture(lump.name))
@@ -250,7 +310,22 @@ namespace tools
                     }
                 }
             }
-            wad_list += wad_path + "\n";
+            if (!append_wad_path(wad_list, wad_path, error))
+                return false;
+        }
+
+        // The editor's placeholder is an internal asset rather than a project
+        // texture. A project compile must provide it independently of whether a
+        // lightmap preview or MAP export happened beforehand.
+        if (missing_empty)
+        {
+            const std::string fallback_path =
+                (std::filesystem::path(input.working_directory) / "tb-empty.wad").string();
+            // The scratch WAD is deleted after compilation, so embed its texture
+            // even when the caller requests external WAD textures.
+            if (!write_empty_texture_wad(fallback_path, error)
+                || !append_wad_path(wad_list, fallback_path, error, true))
+                return false;
         }
 
         const std::string wad_config =
