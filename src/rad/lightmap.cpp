@@ -306,12 +306,7 @@ namespace rad
                         vec_t smoothvalue;
                         int m0 = map.texinfo[(size_t)e->faces[0]->texinfo].miptex;
                         int m1 = map.texinfo[(size_t)e->faces[1]->texinfo].miptex;
-                        smoothvalue = state.smoothvalues[(size_t)m0] > state.smoothvalues[(size_t)m1]
-                            ? state.smoothvalues[(size_t)m0] : state.smoothvalues[(size_t)m1];
-                        if (m0 != m1)
-                        {
-                            smoothvalue = smoothvalue > state.smoothing_threshold_2 ? smoothvalue : state.smoothing_threshold_2;
-                        }
+                        smoothvalue = texture_smoothing_threshold(state, m0, m1);
                         if (smoothvalue >= 1.0 - math::normal_epsilon)
                         {
                             smoothvalue = 2.0;
@@ -425,12 +420,7 @@ namespace rad
                                 vec_t smoothvalue;
                                 int m0 = map.texinfo[(size_t)fl->texinfo].miptex;
                                 int m1 = map.texinfo[(size_t)fcurrent->texinfo].miptex;
-                                smoothvalue = state.smoothvalues[(size_t)m0] > state.smoothvalues[(size_t)m1]
-                                    ? state.smoothvalues[(size_t)m0] : state.smoothvalues[(size_t)m1];
-                                if (m0 != m1)
-                                {
-                                    smoothvalue = smoothvalue > state.smoothing_threshold_2 ? smoothvalue : state.smoothing_threshold_2;
-                                }
+                                smoothvalue = texture_smoothing_threshold(state, m0, m1);
                                 if (smoothvalue >= 1.0 - math::normal_epsilon)
                                 {
                                     smoothvalue = 2.0;

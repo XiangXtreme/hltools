@@ -148,6 +148,7 @@ add_hltools_unit(unit_rad
     PREFIX "unit.rad."
     SOURCES
         unit/rad/options.cpp
+        unit/rad/smoothing.cpp
         unit/rad/studio_shadow.cpp
         unit/rad/unlit_textures.cpp
         ../src/cli/tools/rad_tool.cpp

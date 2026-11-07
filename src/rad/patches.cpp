@@ -1,7 +1,9 @@
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <sstream>
 
 #include "../common/error.h"
 #include "../common/log.h"
@@ -667,6 +669,18 @@ namespace rad
 
         num = (int)state.textures.size();
         state.smoothvalues.assign((size_t)num, state.smoothing_threshold);
+        state.terrain_smoothgroups.assign((size_t)num, {});
+        if (!state.entities.empty())
+        {
+            for (i = 0; i < num; ++i)
+            {
+                const std::string key = std::string("zhlt_smooth_") + state.textures[(size_t)i].name;
+                std::istringstream groups(state.entities[0].value(key.c_str()));
+                std::string group;
+                while (groups >> group)
+                    state.terrain_smoothgroups[(size_t)i].push_back(group);
+            }
+        }
         for (size_t k = 0; k < state.entities.size(); k++)
         {
             format::entity *mapent = &state.entities[k];
@@ -687,6 +701,30 @@ namespace rad
                 }
             }
         }
+    }
+
+    vec_t texture_smoothing_threshold(const rad_state &state, int first, int second)
+    {
+        vec_t threshold = std::max(state.smoothvalues[(size_t)first], state.smoothvalues[(size_t)second]);
+        if (first == second)
+            return threshold;
+
+        vec_t cross_threshold = state.smoothing_threshold_2;
+        if ((size_t)first < state.terrain_smoothgroups.size() &&
+            (size_t)second < state.terrain_smoothgroups.size())
+        {
+            const auto &a = state.terrain_smoothgroups[(size_t)first];
+            const auto &b = state.terrain_smoothgroups[(size_t)second];
+            for (const auto &group : a)
+            {
+                if (std::find(b.begin(), b.end(), group) != b.end())
+                {
+                    cross_threshold = state.smoothing_threshold;
+                    break;
+                }
+            }
+        }
+        return std::max(threshold, cross_threshold);
     }
 
     void read_translucent_textures(rad_state &state)

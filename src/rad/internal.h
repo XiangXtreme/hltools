@@ -515,6 +515,9 @@ namespace rad
 
         // per miptex tables read from the worldspawn texture keys
         std::vector<vec_t> smoothvalues;
+        // Explicit terrain top-texture memberships from worldspawn. Ordinary
+        // materials and terrain side faces keep the global cross-texture rule.
+        std::vector<std::vector<std::string>> terrain_smoothgroups;
         std::vector<vec3v> translucenttextures;
         std::vector<vec3v> lightingconeinfo; // x = power, y = scale
 
@@ -694,6 +697,7 @@ namespace rad
     bool is_unlit_texture(const rad_state &state, const char *name);
     void read_custom_chop_value(rad_state &state);
     void read_custom_smooth_value(rad_state &state);
+    vec_t texture_smoothing_threshold(const rad_state &state, int first, int second);
     void read_translucent_textures(rad_state &state);
     void read_lighting_cone(rad_state &state);
     void load_opaque_entities(rad_state &state);

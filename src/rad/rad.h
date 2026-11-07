@@ -56,7 +56,7 @@ namespace rad
         float dlight_threshold = 10.0f; // direct light threshold
         float direct_scale = 1.0f;      // direct light scale ("-dlight" scale)
         float smoothing_value = 50.0f;  // phong smoothing angle in degrees
-        float smoothing_value_2 = 0.0f; // 0 means fall back to smoothing_value
+        float smoothing_value_2 = 0.0f; // negative means fall back to smoothing_value
         bool incremental = false;
         float indirect_sun = 1.0f;
         bool sky_lighting_fix = true;

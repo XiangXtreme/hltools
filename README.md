@@ -56,6 +56,13 @@ revision inside the project. The compiler uses that geometry and its generated t
 automatically. If the terrain data is missing, outdated, or failed to generate, open and
 save the project in a current TrenchBroom and resolve any reported terrain error.
 
+Current terrain exports explicitly mark generated top textures with worldspawn
+`zhlt_smooth_<texture>` keys. Each value lists space-separated terrain group IDs;
+chunks of one logical terrain share a group. RAD uses the `-smooth` angle (50
+degrees by default) across textures sharing a group while preserving the global
+`-smooth2` rule for other texture pairs. These keys also work in exported MAP
+files and survive standalone RAD rebakes. No extra runtime entities are needed.
+
 ## GPU lighting
 
 GPU accelerated RAD is one of the largest additions. \
