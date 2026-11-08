@@ -905,18 +905,20 @@ namespace bsp
                         err::fatal("direct surface collision exceeds %d planes", limits::max_map_planes);
                     std::vector<bool> flip_axial;
                     flip_axial.reserve(tree.planes.size());
-                    // Small closed-room trees need GoldSrc's positive-axis
-                    // encoding to keep their wall branches solid.  Large
-                    // terrain trees retain the Python reference orientation
-                    // verbatim so their hulls stay byte-equivalent.
-                    const bool canonicalize_axial = tree.nodes.size() <= 100;
+                    // GoldSrc stores axial planes by axis type and distance;
+                    // the sign of the normal is not represented in the
+                    // runtime plane test.  Always encode these planes with a
+                    // positive axis normal and swap the children when the
+                    // source tree used the opposite orientation.  This is
+                    // required for large terrain trees as well as small
+                    // closed-room trees.
                     for (const auto &source : tree.planes)
                     {
                         plane p;
                         p.normal = source.normal;
                         p.dist = source.dist;
                         p.type = (int)math::type_for_normal(p.normal);
-                        const bool flip = canonicalize_axial && p.type < 3 && p.normal[p.type] < 0;
+                        const bool flip = p.type < 3 && p.normal[p.type] < 0;
                         flip_axial.push_back(flip);
                         if (flip)
                         {
@@ -1014,8 +1016,8 @@ namespace bsp
         }
 
         // Install legacytrim trees after normal writer optimization and brink
-        // preparation. Their planes and nodes are intentionally kept verbatim
-        // so the Python fragment BSP remains the collision representation.
+        // preparation. Preserve the source tree's topology, normalizing only
+        // axial plane orientation for GoldSrc's runtime plane tests.
         install_surface_clips(state);
 
         optimize_face_order(state);
