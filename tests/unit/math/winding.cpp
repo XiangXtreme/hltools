@@ -49,4 +49,21 @@ suite("unit.math.winding")
         expect(wide_front.size() == 4);
         expect(wide_back.size() == 4);
     }
+
+    test("winding.preserves thin clipped polygons with an explicit tolerance")
+    {
+        winding polygon({{-1, 0, 0}, {0.005, 0, 0}, {0.005, 1, 0}, {-1, 1, 0}});
+        winding coarse = polygon;
+        expect_false(coarse.clip_in_place(vector{1, 0, 0}, 0, false));
+        expect(coarse.empty());
+
+        require(polygon.clip_in_place(vector{1, 0, 0}, 0, false, math::normal_epsilon));
+        require(polygon.size() == 4);
+        expect(doctest::Approx(polygon.area()) == 0.005);
+        for (const vector &point : polygon.points())
+        {
+            expect(point.x >= 0);
+            expect(point.x <= 0.005);
+        }
+    }
 }

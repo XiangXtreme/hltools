@@ -55,7 +55,11 @@ namespace bsp
         side **pnext;
         for (pnext = &(*b)->sides, s = *pnext; s; s = *pnext)
         {
-            if (s->winding_.clip_in_place(split->normal, split->dist, false))
+            // Detail brush fragments classify whole BSP leaves as solid. Keep
+            // the reference's tight tolerance here: ON_EPSILON can remove a
+            // closing side near a shallow slope and leave a phantom solid.
+            if (s->winding_.clip_in_place(split->normal, split->dist, false,
+                                          (vec_t)math::normal_epsilon))
             {
                 pnext = &s->next;
             }
@@ -72,11 +76,12 @@ namespace bsp
             *b = nullptr;
             return;
         }
-        math::winding w = math::winding::from_plane(split->normal, split->dist,
-                                                    (vec_t)plane_winding_range);
+        math::winding w =
+            math::winding::from_plane(split->normal, split->dist, (vec_t)plane_winding_range);
         for (s = (*b)->sides; s; s = s->next)
         {
-            if (!w.clip_in_place(s->plane_.normal, s->plane_.dist, false))
+            if (!w.clip_in_place(s->plane_.normal, s->plane_.dist, false,
+                                 (vec_t)math::normal_epsilon))
                 break;
         }
         if (!w.empty())

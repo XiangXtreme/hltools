@@ -278,7 +278,7 @@ namespace math
         // clips to the front side in place, the bsp only reference
         // clip(split, keepon) variant: keepon keeps a winding lying entirely on
         // the plane returns false when the winding is clipped away
-        bool clip_in_place(const vec3<T> &normal, T dist, bool keepon)
+        bool clip_in_place(const vec3<T> &normal, T dist, bool keepon, T epsilon = (T)on_epsilon)
         {
             int n = size();
             std::vector<T> dists((size_t)n + 1);
@@ -290,9 +290,9 @@ namespace math
                 T d = dot(points_[(size_t)i], normal);
                 d -= dist;
                 dists[(size_t)i] = d;
-                if (d > (T)on_epsilon)
+                if (d > epsilon)
                     sides[(size_t)i] = side_front;
-                else if (d < -(T)on_epsilon)
+                else if (d < -epsilon)
                     sides[(size_t)i] = side_back;
                 else
                     sides[(size_t)i] = side_on;
@@ -344,7 +344,7 @@ namespace math
             }
 
             points_ = std::move(new_points);
-            remove_colinear_points();
+            remove_colinear_points(epsilon);
             return !points_.empty();
         }
 
@@ -446,11 +446,10 @@ namespace math
             return divide_side::split;
         }
 
-        // drop points that lie on the line between their neighbours always uses
-        // on_epsilon, like the reference (whose epsilon parameter is unused)
-        void remove_colinear_points()
+        // Drop points that lie on the line between their neighbours, using the
+        // same tolerance as the clipping operation that produced the polygon.
+        void remove_colinear_points(T epsilon = (T)on_epsilon)
         {
-            const T epsilon = (T)on_epsilon;
             for (int i = 0; i < (int)points_.size(); i++)
             {
                 int n = (int)points_.size();
