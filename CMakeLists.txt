@@ -321,6 +321,9 @@ target_include_directories(hltools_bsp PUBLIC src)
 target_compile_definitions(hltools_bsp PUBLIC HLTOOLS_DOUBLE_PRECISION)
 target_link_libraries(hltools_bsp PUBLIC hltools_format hltools_math hltools_common)
 
+# Optional dependency-free embedding of these same CSG/BSP geometry sources.
+add_subdirectory(src/collision EXCLUDE_FROM_ALL)
+
 # rad: radiosity lighting float precision like the reference build (no
 # hltools_double_precision)
 add_library(hltools_rad STATIC

@@ -3,6 +3,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <stdexcept>
 
 #include "log.h"
 
@@ -12,9 +13,13 @@ namespace err
     {
         [[noreturn]] void report_and_exit(const char *msg)
         {
+#ifdef HLTOOLS_EMBEDDED
+            throw std::runtime_error(msg);
+#else
             logging::info("\nerror: %s\n", msg);
             logging::close();
             std::exit(1);
+#endif
         }
     }
 

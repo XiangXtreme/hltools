@@ -116,4 +116,5 @@ namespace csg
     };
 
     map_source load_map_file(const std::string &path);
+    map_source parse_map_text(std::string text);
 }

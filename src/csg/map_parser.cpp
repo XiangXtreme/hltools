@@ -493,7 +493,11 @@ namespace csg
         std::vector<unsigned char> bytes;
         if (!fs::read_all(path, bytes))
             err::fatal("failed to load map '%s'", path.c_str());
-        std::string text(bytes.begin(), bytes.end());
+        return parse_map_text(std::string(bytes.begin(), bytes.end()));
+    }
+
+    map_source parse_map_text(std::string text)
+    {
         token_reader reader(std::move(text));
 
         map_source map;

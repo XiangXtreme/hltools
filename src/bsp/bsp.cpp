@@ -306,6 +306,9 @@ namespace bsp
             state.base_path = base_path;
             state.portfilename = base_path + ".prt";
 
+            if (base_path.empty())
+                return;
+
             // delete previous outputs
             std::remove((base_path + ".prt").c_str());
             std::remove((base_path + ".pts").c_str());

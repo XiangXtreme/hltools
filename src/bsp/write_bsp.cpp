@@ -1021,7 +1021,8 @@ namespace bsp
         install_surface_clips(state);
 
         optimize_face_order(state);
-        write_extent_file(state, state.base_path + ".ext");
+        if (!state.base_path.empty())
+            write_extent_file(state, state.base_path + ".ext");
 
         // convert the double working planes to the disk format
         map.planes.resize(state.planes.size());

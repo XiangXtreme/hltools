@@ -116,8 +116,10 @@ namespace csg
         // zhlt_studiobsp: replace studio model point entities with baked
         // world-space detail brushes before anything walks the brush lists.
         // the skins are embedded by the miptex pass below.
+#ifndef HLTOOLS_COLLISION_ONLY
         std::vector<format::mip_texture> studio_textures =
             inject_studio_brushes(result.map, options.wad.map_path);
+#endif
 
         // sequential (the plane store is shared and mutated in order, so this
         // pass is not parallelized); one live bar over the entities
@@ -145,6 +147,7 @@ namespace csg
                           (double)warning.percent);
         }
 
+#ifndef HLTOOLS_COLLISION_ONLY
         miptex_build_result miptex;
         {
             wad_build_options wad_options = options.wad;
@@ -157,6 +160,7 @@ namespace csg
             result.texinfos.set_miptex_index(i, miptex.texinfo_miptex[(size_t)i]);
         if (!result.map.entities.empty())
             result.map.entities[0].set_value("wad", miptex.wad_value.c_str());
+#endif
 
         return result;
     }
