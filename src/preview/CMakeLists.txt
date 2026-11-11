@@ -110,7 +110,7 @@ target_link_libraries(HltoolsPreview_driver PUBLIC
 add_executable(HltoolsLightmapWorker main.cpp)
 target_link_libraries(HltoolsLightmapWorker PRIVATE HltoolsPreview_driver)
 
-if(BUILD_TESTING)
+if(BUILD_TESTING AND CMAKE_SOURCE_DIR STREQUAL HLTOOLS_PREVIEW_ROOT)
   find_package(Python3 COMPONENTS Interpreter QUIET)
   if(Python3_Interpreter_FOUND)
     add_test(NAME HltoolsLightmapWorker
