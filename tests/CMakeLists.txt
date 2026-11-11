@@ -126,6 +126,7 @@ add_hltools_unit(unit_math
 add_hltools_unit(unit_bsp
     PREFIX "unit.bsp."
     SOURCES
+        unit/bsp/brink.cpp
         unit/bsp/brush.cpp
         unit/bsp/leaf_content_conflicts.cpp
         unit/bsp/pack.cpp

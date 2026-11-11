@@ -50,6 +50,33 @@ suite("unit.math.winding")
         expect(wide_back.size() == 4);
     }
 
+    test("winding.clips empty and large polygons across the scratch storage boundary")
+    {
+        winding front, back;
+        winding{}.clip(vector{1, 0, 0}, 0, front, back);
+        expect(front.empty());
+        expect(back.empty());
+        for (const int count : {63, 64, 65, 128})
+        {
+            capture(count);
+            std::vector<vector> points;
+            for (int i = 0; i < count; i++)
+            {
+                const double angle = i * 2 * 3.141592653589793 / count;
+                points.push_back({100 * std::cos(angle), 100 * std::sin(angle), 0});
+            }
+            const winding polygon(std::move(points));
+            polygon.clip(vector{1, 0, 0}, 0, front, back);
+            require(!front.empty());
+            require(!back.empty());
+            expect(doctest::Approx(front.area() + back.area()) == polygon.area());
+            for (const vector &p : front.points())
+                expect(p.x >= -math::on_epsilon);
+            for (const vector &p : back.points())
+                expect(p.x <= math::on_epsilon);
+        }
+    }
+
     test("winding.preserves thin clipped polygons with an explicit tolerance")
     {
         winding polygon({{-1, 0, 0}, {0.005, 0, 0}, {0.005, 1, 0}, {-1, 1, 0}});
