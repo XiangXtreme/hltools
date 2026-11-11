@@ -1,5 +1,6 @@
-#include <string>
+#include <cmath>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include "common/string_util.h"
@@ -79,6 +80,61 @@ namespace
         require(result.map.entities.size() == 1);
         require(result.map.brushes.size() == 1);
         return result.map.brushes[0].local_clip;
+    }
+
+    int surface_contents(const direct_clip::tree &tree, const math::vec3v &point)
+    {
+        int index = tree.head;
+        while (index >= 0)
+        {
+            const auto &node = tree.nodes.at((size_t)index);
+            const auto &plane = tree.planes.at((size_t)node.plane);
+            index = math::dot(point, plane.normal) >= plane.dist ? node.front : node.back;
+        }
+        return index;
+    }
+
+    csg::intermediate_data roof_hulls(const std::string &wad_path, int segments, double rotation = 0)
+    {
+        auto map = make_map(wad_path, "func_detail", "legacytrim");
+        const auto cube = map.sides;
+        map.sides.clear();
+        map.brushes.clear();
+        for (int segment = 0; segment < segments; segment++)
+        {
+            csg::map_brush brush;
+            brush.first_side = (int)map.sides.size();
+            brush.num_sides = 6;
+            for (auto side : cube)
+            {
+                for (auto &point : side.planepts)
+                {
+                    if (segments == 1)
+                    {
+                        // Thin roof terminated by horizontal Z caps, not Y
+                        // walls: shifted slope intersections used to run away.
+                        const auto p = point;
+                        point = {p.x * 2 - 64, p.y / 8 + (64 - p.z) * 8, p.z * 3};
+                    }
+                    else
+                    {
+                        const double angle = -(segment + point.x / 64) * 2 * 3.141592653589793 / segments;
+                        const double radius = 1024 - point.z * 8 + point.y / 8;
+                        point = {(vec_t)(radius * std::cos(angle)), (vec_t)(radius * std::sin(angle)), point.z * 3};
+                    }
+                    const auto p = point;
+                    point.x = p.x * std::cos(rotation) - p.y * std::sin(rotation);
+                    point.y = p.x * std::sin(rotation) + p.y * std::cos(rotation);
+                }
+                map.sides.push_back(side);
+            }
+            map.brushes.push_back(brush);
+        }
+        map.entities[1].num_brushes = segments;
+        csg::csg_options options;
+        options.wad.map_path = wad_path;
+        options.wad.wad_textures = true;
+        return csg::build_intermediate_data(csg::run_csg(std::move(map), options), options.brush);
     }
 }
 
@@ -184,5 +240,71 @@ suite("unit.csg.cliptype")
         expect(run_and_read_local_clip(wad_path, "func_group", "precise") == -1);
         expect(run_and_read_local_clip(wad_path, "func_detail", nullptr) == -1);
         expect(run_and_read_local_clip(wad_path, "func_detail", "bogus") == -1);
+    }
+
+    test("cliptype.legacytrim bounds thin roof ends for standing and ducked hulls")
+    {
+        const auto scratch = test_support::scratch_directory("csg_cliptype_thin_roof");
+        const auto wad = (scratch / "textures.wad").string();
+        test_wad::write(wad, {"STONE"});
+        const auto data = roof_hulls(wad, 1);
+        require(data.surface_clips.size() == 2);
+        for (int hull : {1, 3})
+        {
+            const auto &tree = data.surface_clips[1].hulls[hull];
+            require(tree.valid);
+            expect(surface_contents(tree, {0, 600, -16}) == -1);
+            expect(surface_contents(tree, {0, -80, 200}) == -1);
+            expect(surface_contents(tree, {0, 260, 96}) == -2);
+            expect(surface_contents(tree, {0, 535, 0}) == -2);
+            expect(surface_contents(tree, {0, 537, 0}) == -1);
+        }
+    }
+
+    test("cliptype.legacytrim preserves ring holes and contacts across radial seams")
+    {
+        const auto scratch = test_support::scratch_directory("csg_cliptype_roof_ring");
+        const auto wad = (scratch / "textures.wad").string();
+        test_wad::write(wad, {"STONE"});
+        const auto data = roof_hulls(wad, 24);
+        require(data.surface_clips.size() == 2);
+        for (int hull : {1, 3})
+        {
+            const auto &tree = data.surface_clips[1].hulls[hull];
+            require(tree.valid);
+            expect(surface_contents(tree, {0, 0, 96}) == -1);
+            for (int i = 0; i < 48; i++)
+            {
+                const double angle = i * 2 * 3.141592653589793 / 48;
+                for (double offset : {-1e-5, 0., 1e-5})
+                {
+                    const double a = angle + offset;
+                    const math::vec3v on_roof{(vec_t)(768 * std::cos(a)), (vec_t)(768 * std::sin(a)), 96};
+                    expect(surface_contents(tree, on_roof) == -2);
+                    expect(surface_contents(tree, {(vec_t)(1100 * std::cos(a)), (vec_t)(1100 * std::sin(a)), -16}) ==
+                           -1);
+                    expect(surface_contents(tree, {(vec_t)(400 * std::cos(a)), (vec_t)(400 * std::sin(a)), 200}) == -1);
+                }
+            }
+        }
+    }
+
+    test("cliptype.legacytrim bounds diagonal roof edges inside the axial bounding box")
+    {
+        const auto scratch = test_support::scratch_directory("csg_cliptype_diagonal_roof");
+        const auto wad = (scratch / "textures.wad").string();
+        test_wad::write(wad, {"STONE"});
+        const auto data = roof_hulls(wad, 1, 3.141592653589793 / 4);
+        require(data.surface_clips.size() == 2);
+        const double diagonal = std::sqrt(0.5);
+        for (int hull : {1, 3})
+        {
+            const auto &tree = data.surface_clips[1].hulls[hull];
+            require(tree.valid);
+            // Both points are inside the expanded axial bounds. Only the
+            // edge/box-axis bevel limits the roof end to 520 + 16 * sqrt(2).
+            expect(surface_contents(tree, {-541 * diagonal, 541 * diagonal, 0}) == -2);
+            expect(surface_contents(tree, {-544 * diagonal, 544 * diagonal, 0}) == -1);
+        }
     }
 }
