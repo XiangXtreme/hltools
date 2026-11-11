@@ -154,6 +154,7 @@ add_hltools_unit(unit_rad
         unit/rad/studio_shadow.cpp
         unit/rad/unlit_textures.cpp
         ../src/cli/tools/rad_tool.cpp
+        ../src/cli/tools/rad_options.cpp
     LIBRARIES hltools_rad hltools_compile_parameters
     LABEL unit.rad)
 

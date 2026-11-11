@@ -9,7 +9,9 @@
 #include "common/error.h"
 #include "common/string_util.h"
 #include "format/map/document.h"
+#ifndef HLTOOLS_PREVIEW_ONLY
 #include "format/zip/archive.h"
+#endif
 
 namespace tools
 {
@@ -145,6 +147,7 @@ namespace tools
 
     compile_parameters compile_parameters_from_bsp(const format::map_data &map)
     {
+#ifndef HLTOOLS_PREVIEW_ONLY
         if (!map.embedded_zip.empty())
         {
             std::vector<byte> source;
@@ -157,6 +160,7 @@ namespace tools
             }
         }
 
+#endif
         compile_parameters out;
         for (const format::entity &entity : format::parse_entities(map.entities))
             append_entity_parameters(entity, out);

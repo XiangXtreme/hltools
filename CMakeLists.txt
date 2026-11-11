@@ -323,6 +323,7 @@ target_link_libraries(hltools_bsp PUBLIC hltools_format hltools_math hltools_com
 
 # Optional dependency-free embedding of these same CSG/BSP geometry sources.
 add_subdirectory(src/collision EXCLUDE_FROM_ALL)
+add_subdirectory(src/preview EXCLUDE_FROM_ALL)
 
 # rad: radiosity lighting float precision like the reference build (no
 # hltools_double_precision)
@@ -463,10 +464,14 @@ add_executable(hltools
     src/cli/hltools/compile.cpp
     src/cli/hltools/project_input.cpp
     src/cli/tools/csg_tool.cpp
+    src/cli/tools/csg_options.cpp
     src/cli/tools/bsp_tool.cpp
+    src/cli/tools/bsp_options.cpp
     src/cli/tools/bsp_port_tool.cpp
     src/cli/tools/vis_tool.cpp
+    src/cli/tools/vis_options.cpp
     src/cli/tools/rad_tool.cpp
+    src/cli/tools/rad_options.cpp
     src/cli/tools/bsp_info_tool.cpp
     src/cli/tools/lightmap_tool.cpp
     src/cli/tools/wad_tool.cpp

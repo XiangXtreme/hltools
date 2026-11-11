@@ -17,7 +17,9 @@
 #include "format/bsp/usage_chart.h"
 #include "format/map/document.h"
 #include "format/rad/texlights.h"
+#ifndef HLTOOLS_PREVIEW_ONLY
 #include "format/zip/archive.h"
+#endif
 #include "../../csg/bsp_output.h"
 #include "../../csg/map_parser.h"
 #include "../tools/csg_tool.h"
@@ -78,6 +80,9 @@ namespace tools
             const std::vector<format::entity::pair> &compile_parameters,
             const std::vector<format::texlight> &used_texlights)
         {
+#ifdef HLTOOLS_PREVIEW_ONLY
+            err::fatal("source archive embedding is unavailable in the preview worker");
+#else
             const std::string source_text(source.begin(), source.end());
             const std::string enriched = enriched_map_source(
                 source_text, compile_parameters, used_texlights);
@@ -91,6 +96,7 @@ namespace tools
                 err::fatal("could not create embedded source ZIP: %s",
                            zip_error.c_str());
             }
+#endif
         }
 
         void print_compile_help()

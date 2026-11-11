@@ -91,7 +91,12 @@ namespace tools
                                  .time_since_epoch()
                                  .count();
             static int counter = 0;
-            return (std::filesystem::temp_directory_path()
+            return (
+#ifdef HLTOOLS_PREVIEW_ONLY
+                    std::filesystem::current_path()
+#else
+                    std::filesystem::temp_directory_path()
+#endif
                     / ("hltools-tbproj-" + std::to_string(now) + "-"
                        + std::to_string(counter++)))
                 .string();
