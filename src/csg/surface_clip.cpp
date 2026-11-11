@@ -16,6 +16,7 @@
 
 #include "../common/error.h"
 #include "../common/log.h"
+#include "../common/string_util.h"
 #include "csg.h"
 
 namespace csg
@@ -56,13 +57,20 @@ namespace csg
         struct fragment_split_scratch
         {
             std::vector<vec_t> side;
+            std::vector<size_t> neg_indices;
+            std::vector<size_t> pos_indices;
             point_list cuts;
             std::vector<fragment::plane_mask> cut_incidence;
+            std::vector<std::pair<std::tuple<long long, long long, long long>, size_t>> vertex_lookup;
+            point_list merged_vertices;
+            std::vector<fragment::plane_mask> merged_incidence;
         };
 
         struct build_tree_scratch
         {
             std::vector<int> plane_marks;
+            std::vector<int> candidates;
+            fragment_split_scratch split_scratch;
             int generation = 0;
         };
 
@@ -116,14 +124,6 @@ namespace csg
             for (size_t i = 0; i < source.size(); i++) destination[i] |= source[i];
         }
 
-        fragment_plane_mask fragment_mask_intersection(const fragment_plane_mask &a,
-                                                       const fragment_plane_mask &b)
-        {
-            fragment_plane_mask result(std::min(a.size(), b.size()), 0);
-            for (size_t i = 0; i < result.size(); i++) result[i] = a[i] & b[i];
-            return result;
-        }
-
         int fragment_mask_common_count(const fragment_plane_mask &a,
                                        const fragment_plane_mask &b)
         {
@@ -170,11 +170,13 @@ namespace csg
         struct boundary_poly
         {
             using incidence_list = std::vector<int>;
+            using constraint_list = std::vector<std::pair<int, direct_clip::plane>>;
+            using edge_list = std::vector<boundary_edge_key>;
             point_list vertices;
             std::vector<incidence_list> incidence;
-            std::shared_ptr<std::map<int, direct_clip::plane>> constraints;
+            std::shared_ptr<constraint_list> constraints;
             std::shared_ptr<boundary_plane_ranges> boundary_ranges;
-            mutable std::shared_ptr<std::set<boundary_edge_key>> hull_edges;
+            mutable std::shared_ptr<edge_list> hull_edges;
             math::bounding_box bounds;
         };
 
@@ -183,6 +185,27 @@ namespace csg
             std::vector<direct_clip::plane> planes;
             math::bounding_box bounds;
         };
+
+        const direct_clip::plane *boundary_constraint_find(
+            const boundary_poly::constraint_list &constraints, int plane_id)
+        {
+            const auto it = std::lower_bound(
+                constraints.begin(), constraints.end(), plane_id,
+                [](const auto &entry, int id) { return entry.first < id; });
+            return (it != constraints.end() && it->first == plane_id) ? &it->second : nullptr;
+        }
+
+        void boundary_constraint_set(boundary_poly::constraint_list &constraints,
+                                     int plane_id, const direct_clip::plane &plane)
+        {
+            const auto it = std::lower_bound(
+                constraints.begin(), constraints.end(), plane_id,
+                [](const auto &entry, int id) { return entry.first < id; });
+            if (it != constraints.end() && it->first == plane_id)
+                it->second = plane;
+            else
+                constraints.insert(it, {plane_id, plane});
+        }
 
         void boundary_incidence_add(boundary_poly::incidence_list &ids, int plane)
         {
@@ -305,6 +328,7 @@ namespace csg
         struct boundary_term
         {
             std::vector<int> members;
+            math::bounding_box bounds;
         };
 
         // The adaptive split topology depends on the normalized exterior
@@ -318,11 +342,7 @@ namespace csg
         };
 
 
-        struct triangle
-        {
-            math::vec3v points[3];
-            math::vec3v normal;
-        };
+        using triangle = exacthull_triangle;
 
         struct plane_table
         {
@@ -553,138 +573,52 @@ namespace csg
             return triangles;
         }
 
-        std::vector<direct_clip::plane> expanded_planes(const triangle &tri,
-                                                        const math::vec3v &half)
+        void merge_vertices(point_list &vertices, std::vector<fragment_plane_mask> &incidence,
+                            fragment_split_scratch &scratch)
         {
-            std::vector<math::vec3v> points;
-            points.reserve(24);
-            for (const auto &corner : {math::vec3v{-1, -1, -1}, math::vec3v{-1, -1, 1},
-                                       math::vec3v{-1, 1, -1}, math::vec3v{-1, 1, 1},
-                                       math::vec3v{1, -1, -1}, math::vec3v{1, -1, 1},
-                                       math::vec3v{1, 1, -1}, math::vec3v{1, 1, 1}})
-                for (const auto &v : tri.points)
-                    points.push_back(v + math::vec3v{corner.x * half.x, corner.y * half.y, corner.z * half.z});
-
-            std::vector<direct_clip::plane> out;
-            for (size_t i = 0; i < points.size(); i++)
-                for (size_t j = i + 1; j < points.size(); j++)
-                    for (size_t k = j + 1; k < points.size(); k++)
-                    {
-                        math::vec3v n;
-                        math::cross(points[j] - points[i], points[k] - points[i], n);
-                        if (math::normalize(n) == 0) continue;
-                        vec_t d = math::dot(n, points[i]);
-                        vec_t minv = std::numeric_limits<vec_t>::max();
-                        vec_t maxv = -std::numeric_limits<vec_t>::max();
-                        for (const auto &p : points)
-                        {
-                            vec_t x = math::dot(n, p) - d;
-                            minv = std::min(minv, x);
-                            maxv = std::max(maxv, x);
-                        }
-                        if (maxv <= fragment_epsilon)
-                        {
-                            // n points out of the convex hull.
-                        }
-                        else if (minv >= -fragment_epsilon)
-                        {
-                            n = -n;
-                            d = -d;
-                        }
-                        else continue;
-
-                        int on = 0;
-                        for (const auto &p : points)
-                            if (std::fabs(math::dot(n, p) - d) <= fragment_epsilon * 10) on++;
-                        if (on < 3) continue;
-                        direct_clip::plane candidate{n, d};
-                        bool duplicate = false;
-                        for (const auto &p : out)
-                            duplicate = duplicate
-                                || (math::length(p.normal - candidate.normal) <= plane_normal_tolerance
-                                    && std::fabs(p.dist - candidate.dist) <= plane_dist_tolerance);
-                        if (!duplicate) out.push_back(candidate);
-                    }
-            return out;
-        }
-
-        fragment make_fragment(plane_table &planes, const triangle &tri,
-                               const math::vec3v &half)
-        {
-            std::vector<math::vec3v> points;
-            points.reserve(24);
-            for (const auto &corner : {math::vec3v{-1, -1, -1}, math::vec3v{-1, -1, 1},
-                                       math::vec3v{-1, 1, -1}, math::vec3v{-1, 1, 1},
-                                       math::vec3v{1, -1, -1}, math::vec3v{1, -1, 1},
-                                       math::vec3v{1, 1, -1}, math::vec3v{1, 1, 1}})
-                for (const auto &v : tri.points)
-                    points.push_back(v + math::vec3v{corner.x * half.x, corner.y * half.y, corner.z * half.z});
-            auto facets = expanded_planes(tri, half);
-            fragment out;
-            out.vertices = std::move(points);
-            out.incidence.resize(out.vertices.size());
-            std::vector<int> local_planes;
-            for (const auto &p : facets)
-            {
-                int id = planes.add(p.normal, p.dist);
-                bool near_local = false;
-                for (int previous : local_planes)
-                {
-                    const auto &q = planes.values[(size_t)previous];
-                    if (math::length(q.normal - planes.values[(size_t)id].normal) <= (vec_t)3e-4
-                        && std::fabs(q.dist - planes.values[(size_t)id].dist) <= (vec_t)0.5)
-                    {
-                        near_local = true;
-                        break;
-                    }
-                }
-                if (near_local) continue;
-                local_planes.push_back(id);
-                for (size_t i = 0; i < out.vertices.size(); i++)
-                    if (std::fabs(math::dot(p.normal, out.vertices[i]) - p.dist) <= fragment_epsilon * 10)
-                        fragment_mask_set(out.incidence[i], id);
-            }
-            for (int id = 0; id < (int)planes.values.size(); id++)
-            {
-                int count = 0;
-                for (const auto &inc : out.incidence)
-                    count += fragment_mask_test(inc, id) ? 1 : 0;
-                if (count >= 3) fragment_mask_set(out.sides, id);
-            }
-            return out;
-        }
-
-        void merge_vertices(point_list &vertices, std::vector<fragment_plane_mask> &incidence)
-        {
-            point_list new_vertices;
-            std::vector<fragment_plane_mask> new_incidence;
-            std::map<std::tuple<long long, long long, long long>, size_t> lookup;
+            auto &new_vertices = scratch.merged_vertices;
+            auto &new_incidence = scratch.merged_incidence;
+            auto &lookup = scratch.vertex_lookup;
+            new_vertices.clear();
+            new_incidence.clear();
+            lookup.clear();
+            new_vertices.reserve(vertices.size());
+            new_incidence.reserve(incidence.size());
+            lookup.reserve(vertices.size());
             const vec_t step = fragment_epsilon * 4;
             for (size_t i = 0; i < vertices.size(); i++)
             {
                 auto key = std::make_tuple((long long)std::llround(vertices[i].x / step),
                                            (long long)std::llround(vertices[i].y / step),
                                            (long long)std::llround(vertices[i].z / step));
-                auto it = lookup.find(key);
-                if (it == lookup.end())
+                size_t found = lookup.size();
+                for (size_t j = 0; j < lookup.size(); j++)
                 {
-                    lookup.emplace(key, new_vertices.size());
+                    if (lookup[j].first == key)
+                    {
+                        found = lookup[j].second;
+                        break;
+                    }
+                }
+                if (found == lookup.size())
+                {
+                    lookup.emplace_back(key, new_vertices.size());
                     new_vertices.push_back(vertices[i]);
-                    new_incidence.push_back(incidence[i]);
+                    new_incidence.push_back(std::move(incidence[i]));
                 }
                 else
                 {
-                    auto &dst = new_incidence[it->second];
-                    fragment_mask_or(dst, incidence[i]);
+                    fragment_mask_or(new_incidence[found], incidence[i]);
                 }
             }
-            vertices = std::move(new_vertices);
-            incidence = std::move(new_incidence);
+            vertices.swap(new_vertices);
+            incidence.swap(new_incidence);
         }
 
-        std::pair<std::unique_ptr<fragment>, std::unique_ptr<fragment>>
-        split_fragment(const fragment &input, int pid, const direct_clip::plane &plane,
-                       fragment_split_scratch &scratch)
+        void split_fragment(fragment &input, int pid, const direct_clip::plane &plane,
+                            fragment_split_scratch &scratch,
+                            std::vector<fragment> &front_out,
+                            std::vector<fragment> &back_out)
         {
             auto &side = scratch.side;
             side.resize(input.vertices.size());
@@ -698,36 +632,51 @@ namespace csg
             }
             if (maxv <= fragment_epsilon || minv >= -fragment_epsilon)
             {
-                auto copy = std::make_unique<fragment>(input);
-                if (fragment_mask_test(input.sides, pid)) fragment_mask_set(copy->used, pid);
+                if (fragment_mask_test(input.sides, pid))
+                    fragment_mask_set(input.used, pid);
                 if (maxv <= fragment_epsilon)
-                    return {nullptr, std::move(copy)};
-                return {std::move(copy), nullptr};
+                    back_out.push_back(std::move(input));
+                else
+                    front_out.push_back(std::move(input));
+                return;
+            }
+
+            auto &neg_indices = scratch.neg_indices;
+            auto &pos_indices = scratch.pos_indices;
+            neg_indices.clear();
+            pos_indices.clear();
+            for (size_t i = 0; i < input.vertices.size(); i++)
+            {
+                if (side[i] < -fragment_epsilon)
+                    neg_indices.push_back(i);
+                else if (side[i] > fragment_epsilon)
+                    pos_indices.push_back(i);
             }
 
             auto &cuts = scratch.cuts;
             auto &cut_incidence = scratch.cut_incidence;
             cuts.clear();
             cut_incidence.clear();
-            for (size_t i = 0; i < input.vertices.size(); i++)
-                if (side[i] < -fragment_epsilon)
-                    for (size_t j = 0; j < input.vertices.size(); j++)
-                        if (side[j] > fragment_epsilon)
-                        {
-                            if (fragment_mask_common_count(input.incidence[i], input.incidence[j]) < 2)
-                                continue;
-                            vec_t t = side[i] / (side[i] - side[j]);
-                            cuts.push_back(input.vertices[i] + (input.vertices[j] - input.vertices[i]) * t);
-                            fragment_plane_mask inc;
-                            fragment_mask_intersection_into(inc, input.incidence[i], input.incidence[j]);
-                            fragment_mask_set(inc, pid);
-                            cut_incidence.push_back(std::move(inc));
-                        }
+            for (size_t i : neg_indices)
+                for (size_t j : pos_indices)
+                {
+                    if (fragment_mask_common_count(input.incidence[i], input.incidence[j]) < 2)
+                        continue;
+                    vec_t t = side[i] / (side[i] - side[j]);
+                    cuts.push_back(input.vertices[i] + (input.vertices[j] - input.vertices[i]) * t);
+                    fragment_plane_mask inc;
+                    fragment_mask_intersection_into(inc, input.incidence[i], input.incidence[j]);
+                    fragment_mask_set(inc, pid);
+                    cut_incidence.push_back(std::move(inc));
+                }
 
-            std::unique_ptr<fragment> result[2] = {std::make_unique<fragment>(), std::make_unique<fragment>()};
             for (int which = 0; which < 2; which++)
             {
-                auto &out = *result[which];
+                auto &target = which == 0 ? front_out : back_out;
+                target.emplace_back();
+                auto &out = target.back();
+                out.vertices.reserve(input.vertices.size() + cuts.size());
+                out.incidence.reserve(input.vertices.size() + cut_incidence.size());
                 for (size_t i = 0; i < input.vertices.size(); i++)
                 {
                     bool keep = which == 0 ? side[i] >= -fragment_epsilon : side[i] <= fragment_epsilon;
@@ -739,7 +688,8 @@ namespace csg
                 }
                 out.vertices.insert(out.vertices.end(), cuts.begin(), cuts.end());
                 out.incidence.insert(out.incidence.end(), cut_incidence.begin(), cut_incidence.end());
-                merge_vertices(out.vertices, out.incidence);
+                merge_vertices(out.vertices, out.incidence, scratch);
+                out.sides.assign(input.sides.size(), 0);
                 for (size_t word_index = 0; word_index < input.sides.size(); word_index++)
                 {
                     uint64_t bits = input.sides[word_index];
@@ -758,7 +708,6 @@ namespace csg
                 out.used = input.used;
                 fragment_mask_set(out.used, pid);
             }
-            return {std::move(result[0]), std::move(result[1])};
         }
 
         int build_tree(std::vector<fragment> fragments, plane_table &planes,
@@ -771,7 +720,8 @@ namespace csg
             for (const auto &f : fragments)
                 if (fragment_mask_contains(f.used, f.sides)) return -2;
 
-            std::vector<int> candidates;
+            auto &candidates = scratch.candidates;
+            candidates.clear();
             if (scratch.plane_marks.size() != planes.values.size())
                 scratch.plane_marks.assign(planes.values.size(), 0);
             if (++scratch.generation == std::numeric_limits<int>::max())
@@ -838,20 +788,19 @@ namespace csg
                 }
             }
 
-            std::vector<fragment> front, back;
-            front.reserve((size_t)best_front_count + (size_t)best_cut_count);
-            back.reserve((size_t)best_back_count + (size_t)best_cut_count);
-            fragment_split_scratch split_scratch;
-            const auto &p = planes.values[(size_t)best];
-            for (const auto &f : fragments)
-            {
-                auto split = split_fragment(f, best, p, split_scratch);
-                if (split.first) front.push_back(std::move(*split.first));
-                if (split.second) back.push_back(std::move(*split.second));
-            }
             int index = (int)nodes.size();
             if (nodes.size() >= 500000)
                 err::fatal("legacytrim: fragment BSP exceeded the internal node budget (fragments=%zu, depth=%d)", fragments.size(), depth);
+
+            std::vector<fragment> front, back;
+            front.reserve((size_t)best_front_count + (size_t)best_cut_count);
+            back.reserve((size_t)best_back_count + (size_t)best_cut_count);
+            const auto &p = planes.values[(size_t)best];
+            for (auto &f : fragments)
+                split_fragment(f, best, p, scratch.split_scratch, front, back);
+            fragments.clear();
+            fragments.shrink_to_fit();
+
             nodes.push_back({best, -1, -1});
             nodes[(size_t)index].front = build_tree(std::move(front), planes, nodes, scratch, depth + 1);
             nodes[(size_t)index].back = build_tree(std::move(back), planes, nodes, scratch, depth + 1);
@@ -938,15 +887,16 @@ namespace csg
             std::vector<boundary_poly::incidence_list> incidence;
             vertices.reserve(poly.vertices.size());
             incidence.reserve(poly.incidence.size());
+            std::vector<const direct_clip::plane *> planes;
             for (size_t i = 0; i < poly.vertices.size(); i++)
             {
                 const auto &ids = poly.incidence[i];
                 bool corner = false;
-                std::vector<const direct_clip::plane *> planes;
+                planes.clear();
                 for (int id : ids)
                 {
-                    auto it = poly.constraints->find(id);
-                    if (it != poly.constraints->end()) planes.push_back(&it->second);
+                    if (const auto *plane = boundary_constraint_find(*poly.constraints, id))
+                        planes.push_back(plane);
                 }
                 for (size_t a = 0; a < planes.size() && !corner; a++)
                     for (size_t b = a + 1; b < planes.size() && !corner; b++)
@@ -1024,15 +974,15 @@ namespace csg
                 {hi.x, hi.y, lo.z}, {hi.x, hi.y, hi.z},
             };
             out.incidence.resize(out.vertices.size());
-            out.constraints = std::make_shared<std::map<int, direct_clip::plane>>(std::initializer_list<
-                std::pair<const int, direct_clip::plane>>{
-                {boundary_box_plane_base + 0, {{1, 0, 0}, hi.x}},
-                {boundary_box_plane_base + 1, {{-1, 0, 0}, -lo.x}},
-                {boundary_box_plane_base + 2, {{0, 1, 0}, hi.y}},
-                {boundary_box_plane_base + 3, {{0, -1, 0}, -lo.y}},
-                {boundary_box_plane_base + 4, {{0, 0, 1}, hi.z}},
-                {boundary_box_plane_base + 5, {{0, 0, -1}, -lo.z}},
-            });
+            out.constraints = std::make_shared<boundary_poly::constraint_list>(
+                boundary_poly::constraint_list{
+                    {boundary_box_plane_base + 0, {{1, 0, 0}, hi.x}},
+                    {boundary_box_plane_base + 1, {{-1, 0, 0}, -lo.x}},
+                    {boundary_box_plane_base + 2, {{0, 1, 0}, hi.y}},
+                    {boundary_box_plane_base + 3, {{0, -1, 0}, -lo.y}},
+                    {boundary_box_plane_base + 4, {{0, 0, 1}, hi.z}},
+                    {boundary_box_plane_base + 5, {{0, 0, -1}, -lo.z}},
+                });
             for (size_t i = 0; i < out.vertices.size(); i++)
             {
                 const auto &v = out.vertices[i];
@@ -1103,17 +1053,20 @@ namespace csg
             return false;
         }
 
-        void boundary_add_edge(std::set<boundary_edge_key> &edges, size_t a, size_t b)
+        void boundary_add_edge(boundary_poly::edge_list &edges, size_t a, size_t b)
         {
             if (a == b) return;
             if (a > b) std::swap(a, b);
-            edges.insert({a, b});
+            const boundary_edge_key key{a, b};
+            const auto it = std::lower_bound(edges.begin(), edges.end(), key);
+            if (it == edges.end() || *it != key)
+                edges.insert(it, key);
         }
 
-        const std::set<boundary_edge_key> &boundary_hull_edges(const boundary_poly &poly)
+        const boundary_poly::edge_list &boundary_hull_edges(const boundary_poly &poly)
         {
             if (poly.hull_edges) return *poly.hull_edges;
-            std::set<boundary_edge_key> edges;
+            boundary_poly::edge_list edges;
             std::map<int, std::vector<size_t>> faces;
             for (size_t i = 0; i < poly.incidence.size(); i++)
                 for (int plane : poly.incidence[i])
@@ -1126,7 +1079,7 @@ namespace csg
             for (size_t i = 0; i < poly.vertices.size(); i++)
                 for (size_t j = i + 1; j < poly.vertices.size(); j++)
                     if (boundary_edge(poly.incidence[i], poly.incidence[j]))
-                        boundary_add_edge(edges, i, j);
+                        edges.push_back({i, j});
 
             // Rebuild the actual convex boundary of each supporting face in
             // 2D.  This is the equivalent of the edges exposed by
@@ -1141,9 +1094,10 @@ namespace csg
                 {
                     int degree = 0;
                     for (size_t other : indices)
-                        if (other != index && edges.count(index < other
-                                                         ? boundary_edge_key{index, other}
-                                                         : boundary_edge_key{other, index}))
+                        if (other != index && std::binary_search(
+                                edges.begin(), edges.end(),
+                                index < other ? boundary_edge_key{index, other}
+                                              : boundary_edge_key{other, index}))
                             degree++;
                     if (degree < 2)
                     {
@@ -1218,7 +1172,7 @@ namespace csg
                     boundary_add_edge(edges, hull[i].index, hull[(i + 1) % hull.size()].index);
             }
 
-            poly.hull_edges = std::make_shared<std::set<boundary_edge_key>>(std::move(edges));
+            poly.hull_edges = std::make_shared<boundary_poly::edge_list>(std::move(edges));
             return *poly.hull_edges;
         }
 
@@ -1255,11 +1209,13 @@ namespace csg
             const auto &side = *side_values;
             if (maxv <= boundary_clip_epsilon)
             {
+                if (maxv < -boundary_clip_epsilon)
+                    return std::make_unique<boundary_poly>(input);
                 auto out = std::make_unique<boundary_poly>(input);
-                if (!out->constraints) out->constraints = std::make_shared<std::map<int, direct_clip::plane>>();
-                if (!out->constraints->count(plane_id))
-                    out->constraints = std::make_shared<std::map<int, direct_clip::plane>>(*out->constraints);
-                (*out->constraints)[plane_id] = plane;
+                if (!out->constraints) out->constraints = std::make_shared<boundary_poly::constraint_list>();
+                else if (!boundary_constraint_find(*out->constraints, plane_id))
+                    out->constraints = std::make_shared<boundary_poly::constraint_list>(*out->constraints);
+                boundary_constraint_set(*out->constraints, plane_id, plane);
                 for (size_t i = 0; i < out->vertices.size(); i++)
                     if (std::fabs(side[i]) <= boundary_clip_epsilon)
                         boundary_incidence_add(out->incidence[i], plane_id);
@@ -1271,10 +1227,10 @@ namespace csg
             point_list vertices;
             std::vector<boundary_poly::incidence_list> incidence;
             auto constraints = input.constraints;
-            if (!constraints) constraints = std::make_shared<std::map<int, direct_clip::plane>>();
-            if (!constraints->count(plane_id))
-                constraints = std::make_shared<std::map<int, direct_clip::plane>>(*constraints);
-            (*constraints)[plane_id] = plane;
+            if (!constraints) constraints = std::make_shared<boundary_poly::constraint_list>();
+            else if (!boundary_constraint_find(*constraints, plane_id))
+                constraints = std::make_shared<boundary_poly::constraint_list>(*constraints);
+            boundary_constraint_set(*constraints, plane_id, plane);
             const auto &hull_edges = boundary_hull_edges(input);
             for (size_t i = 0; i < input.vertices.size(); i++)
             {
@@ -1288,21 +1244,21 @@ namespace csg
                 }
             }
             size_t cut_count = 0;
-            for (size_t i = 0; i < input.vertices.size(); i++)
-                for (size_t j = i + 1; j < input.vertices.size(); j++)
-                {
-                    if (!((side[i] < -boundary_clip_epsilon && side[j] > boundary_clip_epsilon)
-                          || (side[j] < -boundary_clip_epsilon && side[i] > boundary_clip_epsilon)))
-                        continue;
-                    if (!hull_edges.count({i, j})) continue;
-                    vec_t t = side[i] / (side[i] - side[j]);
-                    vertices.push_back(input.vertices[i] + (input.vertices[j] - input.vertices[i]) * t);
-                    boundary_poly::incidence_list inc;
-                    boundary_incidence_intersection(inc, input.incidence[i], input.incidence[j]);
-                    boundary_incidence_add(inc, plane_id);
-                    incidence.push_back(std::move(inc));
-                    cut_count++;
-                }
+            for (const auto &edge : hull_edges)
+            {
+                const size_t i = edge.first;
+                const size_t j = edge.second;
+                if (!((side[i] < -boundary_clip_epsilon && side[j] > boundary_clip_epsilon)
+                      || (side[j] < -boundary_clip_epsilon && side[i] > boundary_clip_epsilon)))
+                    continue;
+                vec_t t = side[i] / (side[i] - side[j]);
+                vertices.push_back(input.vertices[i] + (input.vertices[j] - input.vertices[i]) * t);
+                boundary_poly::incidence_list inc;
+                boundary_incidence_intersection(inc, input.incidence[i], input.incidence[j]);
+                boundary_incidence_add(inc, plane_id);
+                incidence.push_back(std::move(inc));
+                cut_count++;
+            }
             // Recover an edge when a face was represented by too few
             // incidence IDs.  This is intentionally limited to the actual
             // supporting-face hull edges, never the complete crossing pair
@@ -1475,6 +1431,29 @@ namespace csg
             for (const auto &tri : triangles)
                 boundary_add_plane(planes, {tri.normal, math::dot(tri.normal, tri.points[0])});
 
+            struct vertical_triangle
+            {
+                math::vec3v normal;
+                math::vec3v point0;
+                vec_t height;
+            };
+            std::vector<vertical_triangle> vertical_tris;
+            for (const auto &tri : triangles)
+            {
+                if (std::fabs(tri.normal.z) >= boundary_plane_epsilon * 2) continue;
+                vec_t span = 0;
+                for (int e = 0; e < 3; e++)
+                {
+                    const auto delta = tri.points[(e + 1) % 3] - tri.points[e];
+                    span = std::max(span, (vec_t)std::sqrt(delta.x * delta.x + delta.y * delta.y));
+                }
+                math::vec3v cross;
+                math::cross(tri.points[1] - tri.points[0], tri.points[2] - tri.points[0], cross);
+                const vec_t twice_area = (vec_t)math::length(cross);
+                const vec_t height = span > (vec_t)1e-10 ? twice_area / span : (vec_t)0;
+                vertical_tris.push_back({tri.normal, tri.points[0], height});
+            }
+
             std::vector<bool> remove(planes.size(), false);
             for (size_t index = 0; index < planes.size(); index++)
             {
@@ -1482,23 +1461,13 @@ namespace csg
                 if (std::fabs(p.normal.z) > boundary_plane_epsilon) continue;
                 vec_t max_height = 0;
                 bool found = false;
-                for (const auto &tri : triangles)
+                for (const auto &tri : vertical_tris)
                 {
                     bool same_normal = math::length(tri.normal - p.normal) < boundary_plane_epsilon;
-                    bool same_dist = std::fabs(math::dot(tri.points[0], p.normal) - p.dist) < (vec_t)1e-6;
+                    bool same_dist = std::fabs(math::dot(tri.point0, p.normal) - p.dist) < (vec_t)1e-6;
                     if (!same_normal || !same_dist) continue;
                     found = true;
-                    vec_t span = 0;
-                    for (int e = 0; e < 3; e++)
-                    {
-                        const auto delta = tri.points[(e + 1) % 3] - tri.points[e];
-                        span = std::max(span, (vec_t)std::sqrt(delta.x * delta.x + delta.y * delta.y));
-                    }
-                    math::vec3v cross;
-                    math::cross(tri.points[1] - tri.points[0], tri.points[2] - tri.points[0], cross);
-                    vec_t twice_area = (vec_t)math::length(cross);
-                    if (span > (vec_t)1e-10)
-                        max_height = std::max(max_height, twice_area / span);
+                    max_height = std::max(max_height, tri.height);
                 }
                 if (found && max_height <= boundary_roof_lift)
                     remove[index] = true;
@@ -1534,18 +1503,18 @@ namespace csg
                     if (!duplicate) out.vertices.push_back(v);
                 }
             out.incidence.resize(out.vertices.size());
-            for (size_t i = 0; i < out.vertices.size(); i++)
-                for (size_t f = 0; f < brush.hulls[0].faces.size(); f++)
-                {
-                    const auto &face = brush.hulls[0].faces[f];
-                    const auto &p = result.planes[(size_t)face.planenum];
-                    if (!out.constraints) out.constraints = std::make_shared<std::map<int, direct_clip::plane>>();
-                    (*out.constraints)[boundary_source_plane_base + source_index * 1024 + (int)f] =
-                        direct_clip::plane{p.normal, p.dist};
+            out.constraints = std::make_shared<boundary_poly::constraint_list>();
+            out.constraints->reserve(brush.hulls[0].faces.size());
+            for (size_t f = 0; f < brush.hulls[0].faces.size(); f++)
+            {
+                const auto &face = brush.hulls[0].faces[f];
+                const auto &p = result.planes[(size_t)face.planenum];
+                const int plane_id = boundary_source_plane_base + source_index * 1024 + (int)f;
+                boundary_constraint_set(*out.constraints, plane_id, direct_clip::plane{p.normal, p.dist});
+                for (size_t i = 0; i < out.vertices.size(); i++)
                     if (std::fabs(math::dot(out.vertices[i], p.normal) - p.dist) <= (vec_t)1e-5)
-                        boundary_incidence_add(out.incidence[i],
-                                               boundary_source_plane_base + source_index * 1024 + (int)f);
-                }
+                        boundary_incidence_add(out.incidence[i], plane_id);
+            }
             rebuild_boundary_bounds(out);
             return out;
         }
@@ -1781,27 +1750,27 @@ namespace csg
             return result;
         }
 
-        bool boundary_subset(const std::vector<int> &small, const std::vector<int> &large)
-        {
-            size_t i = 0, j = 0;
-            while (i < small.size() && j < large.size())
-            {
-                if (small[i] == large[j]) { i++; j++; }
-                else if (small[i] > large[j]) j++;
-                else return false;
-            }
-            return i == small.size();
-        }
-
         std::vector<boundary_term> compose_boundary_terms(
             const std::vector<direct_clip::plane> &planes,
             const math::bounding_box &bounds,
             const std::vector<boundary_poly> &source_pieces,
             const std::vector<boundary_volume> &allowed)
         {
+            struct cached_closure_info
+            {
+                vec_t excess;
+                math::vec3v witness;
+                math::bounding_box bounds;
+            };
             std::vector<boundary_poly> pending = source_pieces;
-            std::map<std::vector<int>, std::pair<vec_t, math::vec3v>> cache;
-            std::map<std::vector<int>, vec_t> accepted;
+            std::map<std::vector<int>, cached_closure_info> cache;
+            std::map<std::vector<int>, math::bounding_box> accepted;
+            std::vector<fragment_plane_mask> accepted_masks;
+            auto make_member_mask = [&](const std::vector<int> &members) {
+                fragment_plane_mask mask((planes.size() + 63) / 64, 0);
+                for (int m : members) fragment_mask_set(mask, m);
+                return mask;
+            };
             std::vector<math::bounding_box> allowed_bounds;
             allowed_bounds.reserve(allowed.size());
             for (const auto &volume : allowed) allowed_bounds.push_back(volume.bounds);
@@ -1821,9 +1790,10 @@ namespace csg
                 const auto &ranges = *piece.boundary_ranges;
                 const auto &members = ranges.members;
                 if (accepted.count(members)) continue;
+                const auto member_mask = make_member_mask(members);
                 bool absorbed = false;
-                for (const auto &entry : accepted)
-                    if (boundary_subset(entry.first, members)) { absorbed = true; break; }
+                for (const auto &acc_mask : accepted_masks)
+                    if (fragment_mask_contains(member_mask, acc_mask)) { absorbed = true; break; }
                 if (absorbed) continue;
 
                 auto cached = cache.find(members);
@@ -1847,16 +1817,17 @@ namespace csg
                             if (!fragment->vertices.empty()) witness = witness * ((vec_t)1 / fragment->vertices.size());
                         }
                     }
-                    cached = cache.emplace(members, std::make_pair(excess, witness)).first;
+                    cached = cache.emplace(members, cached_closure_info{excess, witness, closure->bounds}).first;
                 }
-                const vec_t excess = cached->second.first;
+                const vec_t excess = cached->second.excess;
                 if (excess <= boundary_volume_epsilon)
                 {
-                    accepted.emplace(members, excess);
+                    if (accepted.emplace(members, cached->second.bounds).second)
+                        accepted_masks.push_back(member_mask);
                     continue;
                 }
 
-                const auto &witness = cached->second.second;
+                const auto &witness = cached->second.witness;
                 std::vector<std::pair<vec_t, int>> candidates;
                 for (int index = 0; index < (int)planes.size(); index++)
                 {
@@ -1920,19 +1891,32 @@ namespace csg
                                   visited, pending.size(), accepted.size());
             }
 
-            std::vector<std::pair<std::vector<int>, vec_t>> sorted;
-            for (const auto &entry : accepted) sorted.push_back(entry);
+            struct sorted_entry
+            {
+                std::vector<int> members;
+                math::bounding_box bounds;
+                fragment_plane_mask mask;
+            };
+            std::vector<sorted_entry> sorted;
+            sorted.reserve(accepted.size());
+            for (const auto &entry : accepted)
+                sorted.push_back({entry.first, entry.second, make_member_mask(entry.first)});
             std::sort(sorted.begin(), sorted.end(), [](const auto &a, const auto &b) {
-                if (a.first.size() != b.first.size()) return a.first.size() < b.first.size();
-                return a.first < b.first;
+                if (a.members.size() != b.members.size()) return a.members.size() < b.members.size();
+                return a.members < b.members;
             });
             std::vector<boundary_term> terms;
-            for (const auto &entry : sorted)
+            std::vector<fragment_plane_mask> term_masks;
+            for (auto &entry : sorted)
             {
                 bool covered = false;
-                for (const auto &term : terms)
-                    if (boundary_subset(term.members, entry.first)) { covered = true; break; }
-                if (!covered) terms.push_back({entry.first});
+                for (const auto &tmask : term_masks)
+                    if (fragment_mask_contains(entry.mask, tmask)) { covered = true; break; }
+                if (!covered)
+                {
+                    term_masks.push_back(std::move(entry.mask));
+                    terms.push_back({std::move(entry.members), entry.bounds});
+                }
             }
             logging::info("legacytrim: %zu whole-entity terms after absorption (%d splits)\n",
                           terms.size(), splits);
@@ -2012,15 +1996,16 @@ namespace csg
             const auto &bounds = composition.bounds;
             const auto &terms = composition.terms;
 
+            std::vector<direct_clip::plane> shifted = boundaries;
+            for (auto &p : shifted)
+                p.dist += p.normal.x * p.normal.x * half.x
+                    + p.normal.y * p.normal.y * half.y
+                    + p.normal.z * p.normal.z * half.z;
+
             plane_table output_planes;
             std::vector<fragment> fragments;
             for (const auto &term : terms)
             {
-                std::vector<direct_clip::plane> shifted = boundaries;
-                for (auto &p : shifted)
-                    p.dist += p.normal.x * p.normal.x * half.x
-                        + p.normal.y * p.normal.y * half.y
-                        + p.normal.z * p.normal.z * half.z;
                 auto poly = boundary_closure(bounds, shifted, term.members);
                 if (!poly || poly->vertices.size() < 4) continue;
 
@@ -2057,62 +2042,204 @@ namespace csg
             bool have_bounds = false;
             for (const auto &term : terms)
             {
-                auto poly = boundary_closure(bounds, boundaries, term.members);
-                if (!poly) continue;
-                for (const auto &v : poly->vertices)
-                    for (const auto &corner : {math::vec3v{-1, -1, -1}, math::vec3v{-1, -1, 1},
-                                               math::vec3v{-1, 1, -1}, math::vec3v{-1, 1, 1},
-                                               math::vec3v{1, -1, -1}, math::vec3v{1, -1, 1},
-                                               math::vec3v{1, 1, -1}, math::vec3v{1, 1, 1}})
+                if (term.bounds.is_empty()) continue;
+                const math::vec3v term_mins = term.bounds.mins - half;
+                const math::vec3v term_maxs = term.bounds.maxs + half;
+                if (!have_bounds)
+                {
+                    tree.mins = term_mins;
+                    tree.maxs = term_maxs;
+                    have_bounds = true;
+                }
+                else
+                {
+                    for (int axis = 0; axis < 3; axis++)
                     {
-                        math::vec3v p = v + math::vec3v{corner.x * half.x, corner.y * half.y, corner.z * half.z};
-                        if (!have_bounds) { tree.mins = tree.maxs = p; have_bounds = true; }
-                        else
-                        {
-                            for (int axis = 0; axis < 3; axis++)
-                            {
-                                tree.mins[axis] = std::min(tree.mins[axis], p[axis]);
-                                tree.maxs[axis] = std::max(tree.maxs[axis], p[axis]);
-                            }
-                        }
+                        tree.mins[axis] = std::min(tree.mins[axis], term_mins[axis]);
+                        tree.maxs[axis] = std::max(tree.maxs[axis], term_maxs[axis]);
                     }
+                }
             }
             return tree;
         }
 
-        direct_clip::tree build_hull(const std::vector<triangle> &triangles,
-                                     const math::vec3v &half)
+        std::unique_ptr<boundary_poly> clip_exact_polyhedron(
+            const math::bounding_box &bounds,
+            const std::vector<direct_clip::plane> &planes)
         {
-            direct_clip::tree tree;
-            plane_table planes;
-            std::vector<fragment> fragments;
-            for (const triangle &tri : triangles)
-                fragments.push_back(make_fragment(planes, tri, half));
-            if (fragments.empty()) return tree;
-            fragment_normalize_masks(fragments, planes.values.size());
-            logging::info("legacytrim: fragment input %zu triangles, %zu planes\n",
-                          triangles.size(), planes.values.size());
-            build_tree_scratch build_scratch;
-            tree.head = build_tree(std::move(fragments), planes, tree.nodes, build_scratch);
-            tree.planes = std::move(planes.values);
-            tree.valid = tree.head >= 0;
-            compact_direct_tree(tree);
-            bool have_bounds = false;
-            for (const triangle &tri : triangles)
-                for (const auto &v : tri.points)
-                    for (const auto &corner : {math::vec3v{-1, -1, -1}, math::vec3v{-1, -1, 1},
-                                               math::vec3v{-1, 1, -1}, math::vec3v{-1, 1, 1},
-                                               math::vec3v{1, -1, -1}, math::vec3v{1, -1, 1},
-                                               math::vec3v{1, 1, -1}, math::vec3v{1, 1, 1}})
-                    {
-                        math::vec3v p = v + math::vec3v{corner.x * half.x, corner.y * half.y, corner.z * half.z};
-                        if (!have_bounds) { tree.mins = tree.maxs = p; have_bounds = true; }
-                        else { tree.mins.x = std::min(tree.mins.x, p.x); tree.mins.y = std::min(tree.mins.y, p.y); tree.mins.z = std::min(tree.mins.z, p.z);
-                               tree.maxs.x = std::max(tree.maxs.x, p.x); tree.maxs.y = std::max(tree.maxs.y, p.y); tree.maxs.z = std::max(tree.maxs.z, p.z); }
-                    }
-            return tree;
+            auto result = std::make_unique<boundary_poly>(make_boundary_box(bounds));
+            for (size_t i = 0; i < planes.size(); i++)
+            {
+                auto clipped = clip_boundary_poly(*result, planes[i], (int)i);
+                if (!clipped)
+                    return nullptr;
+                result = std::move(clipped);
+            }
+            return result;
         }
 
+    }
+
+    direct_clip::tree build_exacthull_hull(
+        const std::vector<exacthull_triangle> &triangles,
+        const math::vec3v &half,
+        bool legacy_mode)
+    {
+        direct_clip::tree tree;
+        if (triangles.empty()) return tree;
+
+        plane_table output_planes;
+        std::vector<fragment> fragments;
+        fragments.reserve(triangles.size());
+
+        const math::vec3v axes[3] = {
+            math::vec3v{1, 0, 0},
+            math::vec3v{0, 1, 0},
+            math::vec3v{0, 0, 1}
+        };
+
+        for (const auto &tri : triangles)
+        {
+            math::vec3v n_tri = math::cross(tri.points[1] - tri.points[0],
+                                            tri.points[2] - tri.points[0]);
+            if (math::length(n_tri) < 1e-7)
+                continue;
+
+            std::vector<direct_clip::plane> candidates;
+            candidates.reserve(32);
+
+            auto add_candidate = [&](const math::vec3v &normal) {
+                if (math::length(normal) < 1e-7) return;
+                math::vec3v n = normal;
+                math::normalize(n);
+
+                vec_t offset = 0;
+                if (legacy_mode)
+                {
+                    offset = (vec_t)(n.x * n.x * half.x + n.y * n.y * half.y + n.z * n.z * half.z);
+                }
+                else
+                {
+                    offset = (vec_t)(std::fabs(n.x) * half.x + std::fabs(n.y) * half.y + std::fabs(n.z) * half.z);
+                }
+
+                vec_t max_dot = math::dot(n, tri.points[0]);
+                max_dot = std::max(max_dot, (vec_t)math::dot(n, tri.points[1]));
+                max_dot = std::max(max_dot, (vec_t)math::dot(n, tri.points[2]));
+                vec_t dist = max_dot + offset;
+
+                for (const auto &existing : candidates)
+                {
+                    if (math::length(existing.normal - n) <= plane_normal_tolerance
+                        && std::fabs(existing.dist - dist) <= plane_dist_tolerance)
+                    {
+                        return;
+                    }
+                }
+                candidates.push_back({n, dist});
+            };
+
+            // 1. 6 axial box face normals
+            add_candidate(math::vec3v{ 1,  0,  0});
+            add_candidate(math::vec3v{-1,  0,  0});
+            add_candidate(math::vec3v{ 0,  1,  0});
+            add_candidate(math::vec3v{ 0, -1,  0});
+            add_candidate(math::vec3v{ 0,  0,  1});
+            add_candidate(math::vec3v{ 0,  0, -1});
+
+            // 2. Triangle face normals
+            add_candidate(n_tri);
+            add_candidate(-n_tri);
+
+            // 3. Triangle edge x Box axis normals
+            const math::vec3v edges[3] = {
+                tri.points[1] - tri.points[0],
+                tri.points[2] - tri.points[1],
+                tri.points[0] - tri.points[2]
+            };
+            for (const auto &e : edges)
+            {
+                for (const auto &a : axes)
+                {
+                    math::vec3v c = math::cross(e, a);
+                    if (math::length(c) > 1e-7)
+                    {
+                        add_candidate(c);
+                        add_candidate(-c);
+                    }
+                }
+            }
+
+            math::bounding_box tri_bounds;
+            for (int k = 0; k < 3; k++)
+                tri_bounds.add(tri.points[k]);
+            tri_bounds.mins -= half + math::vec3v{2, 2, 2};
+            tri_bounds.maxs += half + math::vec3v{2, 2, 2};
+
+            auto poly = clip_exact_polyhedron(tri_bounds, candidates);
+            if (!poly || poly->vertices.size() < 4) continue;
+
+            fragment f;
+            f.vertices = poly->vertices;
+            f.incidence.resize(f.vertices.size());
+            for (const auto &p : candidates)
+            {
+                if (!boundary_supporting_plane(*poly, p)) continue;
+                const int pid = output_planes.add(p.normal, p.dist);
+                int count = 0;
+                for (size_t i = 0; i < f.vertices.size(); i++)
+                {
+                    if (std::fabs(math::dot(f.vertices[i], p.normal) - p.dist) <= fragment_epsilon * 10)
+                    {
+                        fragment_mask_set(f.incidence[i], pid);
+                        count++;
+                    }
+                }
+                if (count >= 3)
+                    fragment_mask_set(f.sides, pid);
+            }
+            if (f.vertices.size() >= 4 && !f.sides.empty())
+                fragments.push_back(std::move(f));
+        }
+
+        if (fragments.empty()) return tree;
+
+        fragment_normalize_masks(fragments, output_planes.values.size());
+        logging::info("exacthull: %zu fragments, %zu active planes, hull half %g %g %g (%s)\n",
+                      fragments.size(), output_planes.values.size(),
+                      (double)half.x, (double)half.y, (double)half.z,
+                      legacy_mode ? "legacytrim" : "simple");
+
+        build_tree_scratch build_scratch;
+        tree.head = build_tree(std::move(fragments), output_planes, tree.nodes, build_scratch);
+        tree.planes = std::move(output_planes.values);
+        tree.valid = tree.head >= 0;
+        compact_direct_tree(tree);
+
+        bool have_bounds = false;
+        for (const auto &tri : triangles)
+        {
+            for (const auto &v : tri.points)
+            {
+                const math::vec3v v_mins = v - half;
+                const math::vec3v v_maxs = v + half;
+                if (!have_bounds)
+                {
+                    tree.mins = v_mins;
+                    tree.maxs = v_maxs;
+                    have_bounds = true;
+                }
+                else
+                {
+                    for (int axis = 0; axis < 3; axis++)
+                    {
+                        tree.mins[axis] = std::min(tree.mins[axis], v_mins[axis]);
+                        tree.maxs[axis] = std::max(tree.maxs[axis], v_maxs[axis]);
+                    }
+                }
+            }
+        }
+        return tree;
     }
 
     std::vector<direct_clip::model> build_surface_clip_models(
@@ -2143,57 +2270,105 @@ namespace csg
                 continue;
 
             direct_clip::model &model = out.back();
+            const auto &map_ent = result.map.entities[(size_t)entity.entity_num];
+            const char *col_val = map_ent.value("zhlt_studiobsp_collision");
+            int studio_mode = 0;
+            if (col_val)
+            {
+                if (std::strcmp(col_val, "2") == 0 || str::iequals(col_val, "exacthull"))
+                    studio_mode = 2;
+                else if (std::strcmp(col_val, "3") == 0 || str::iequals(col_val, "exacthull_legacy")
+                         || str::iequals(col_val, "legacytrim"))
+                    studio_mode = 3;
+            }
+
+            if (studio_mode == 2 || studio_mode == 3)
+            {
+                if (entity.entity_num == 0)
+                {
+                    logging::warn("zhlt_studiobsp: entity 0 cannot use ExactHull direct collision; skipping\n");
+                    continue;
+                }
+                std::vector<exacthull_triangle> studio_triangles;
+                for (int b = 0; b < map_ent.num_brushes; b++)
+                {
+                    const map_brush &brush = result.map.brushes[(size_t)map_ent.first_brush + b];
+                    if (!brush.generated_studio || brush.num_sides < 5) continue;
+                    const brush_side &side = result.map.sides[(size_t)brush.first_side];
+                    exacthull_triangle tri;
+                    for (int k = 0; k < 3; k++)
+                        tri.points[k] = side.planepts[k];
+                    math::vec3v n;
+                    math::cross(tri.points[1] - tri.points[0], tri.points[2] - tri.points[0], n);
+                    if (math::normalize(n) == 0) continue;
+                    tri.normal = n;
+                    studio_triangles.push_back(tri);
+                }
+
+                if (studio_triangles.empty()) continue;
+
+                const bool legacy_mode = (studio_mode == 3);
+                auto hull1 = std::async(std::launch::async, [&studio_triangles, &options, legacy_mode]() {
+                    return build_exacthull_hull(studio_triangles, options.hull_size[1][1], legacy_mode);
+                });
+                auto hull3 = std::async(std::launch::async, [&studio_triangles, &options, legacy_mode]() {
+                    return build_exacthull_hull(studio_triangles, options.hull_size[3][1], legacy_mode);
+                });
+                model.hulls[1] = hull1.get();
+                model.hulls[2] = model.hulls[1];
+                model.hulls[3] = hull3.get();
+                model.valid = model.hulls[1].valid && model.hulls[3].valid;
+                if (model.valid)
+                    logging::info("exacthull: model %zu, %zu studio triangles, hull1 %zu nodes, hull3 %zu nodes (%s)\n",
+                                  out.size() - 1, studio_triangles.size(),
+                                  model.hulls[1].nodes.size(), model.hulls[3].nodes.size(),
+                                  legacy_mode ? "legacytrim" : "simple");
+                continue;
+            }
+
             bool any = false, all = true;
-            bool boundary_mode = options.clip == clip_type::legacytrim;
+            const bool global_legacytrim = options.clip == clip_type::legacytrim;
             for (const auto &brush : entity.brushes)
             {
                 if (brush.contents == content::origin || brush.contents == content::bounding_box
                     || brush.skipped)
                     continue;
-                if (boundary_mode && brush.surface_legacytrim)
+                if (global_legacytrim)
                 {
-                    if (brush.contents != content::solid || brush.hulls[0].faces.empty())
-                        continue;
-                    any = true;
-                    all = all && brush.surface_legacytrim;
+                    if (brush.surface_legacytrim && brush.contents == content::solid
+                        && !brush.hulls[0].faces.empty())
+                        any = true;
                     continue;
                 }
-                if (boundary_mode)
-                    continue;
                 if (brush.contents != content::solid || brush.hulls[0].faces.empty()
-                    || brush.hulls[1].faces.empty())
+                    || !brush.surface_legacytrim)
                 {
                     all = false;
                     continue;
                 }
                 any = true;
-                boundary_mode = boundary_mode || brush.surface_legacytrim;
-                all = all && brush.surface_legacytrim;
             }
             if (!any || !all) continue;
-            auto triangles = extract_triangles(result, entity, boundary_mode);
+            auto triangles = extract_triangles(result, entity, true);
             if (triangles.empty()) continue;
-            if (boundary_mode)
-            {
-                std::vector<const built_brush *> brushes;
-                for (const auto &brush : entity.brushes)
-                    if (brush.surface_legacytrim && brush.contents == content::solid && !brush.skipped
-                        && !brush.hulls[0].faces.empty())
-                        brushes.push_back(&brush);
-                // This is the reference path used by the Python legacytrim mode:
-                // compose the continuous exterior boundary into whole-entity
-                // convex terms, then expand those terms for each player hull.
-                const auto composition = prepare_boundary_composition(triangles, brushes, result);
-                auto hull1 = std::async(std::launch::async, [&composition, &options]() {
-                    return build_boundary_hull(composition, options.hull_size[1][1]);
-                });
-                auto hull3 = std::async(std::launch::async, [&composition, &options]() {
-                    return build_boundary_hull(composition, options.hull_size[3][1]);
-                });
-                model.hulls[1] = hull1.get();
-                model.hulls[2] = model.hulls[1];
-                model.hulls[3] = hull3.get();
-            }
+            std::vector<const built_brush *> brushes;
+            for (const auto &brush : entity.brushes)
+                if (brush.surface_legacytrim && brush.contents == content::solid && !brush.skipped
+                    && !brush.hulls[0].faces.empty())
+                    brushes.push_back(&brush);
+            // This is the reference path used by the Python legacytrim mode:
+            // compose the continuous exterior boundary into whole-entity
+            // convex terms, then expand those terms for each player hull.
+            const auto composition = prepare_boundary_composition(triangles, brushes, result);
+            auto hull1 = std::async(std::launch::async, [&composition, &options]() {
+                return build_boundary_hull(composition, options.hull_size[1][1]);
+            });
+            auto hull3 = std::async(std::launch::async, [&composition, &options]() {
+                return build_boundary_hull(composition, options.hull_size[3][1]);
+            });
+            model.hulls[1] = hull1.get();
+            model.hulls[2] = model.hulls[1];
+            model.hulls[3] = hull3.get();
             model.valid = model.hulls[1].valid && model.hulls[3].valid;
             if (model.valid)
                 logging::info("legacytrim: model %zu, %zu exterior triangles, hull1 %zu nodes, hull3 %zu nodes\n",

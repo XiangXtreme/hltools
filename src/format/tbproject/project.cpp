@@ -121,13 +121,12 @@ namespace format::tbproject
 
         int schema = 0;
         if (!query_int(handle->handle, "PRAGMA user_version", schema)
-            || schema < oldest_schema || schema > newest_schema)
+            || schema < oldest_schema)
         {
             if (error)
                 *error = "unsupported project schema version "
-                    + std::to_string(schema) + " (supported: "
-                    + std::to_string(oldest_schema) + "-"
-                    + std::to_string(newest_schema) + ")";
+                    + std::to_string(schema) + " (minimum supported: "
+                    + std::to_string(oldest_schema) + ")";
             return nullptr;
         }
 
@@ -231,12 +230,6 @@ namespace format::tbproject
     {
         const std::string instructions =
             "open and save this project with an up-to-date TrenchBroom";
-        if (schema_ < 4)
-        {
-            if (error)
-                *error = "terrain compile data is missing; " + instructions;
-            return false;
-        }
 
         sqlite3_stmt *statement = nullptr;
         if (sqlite3_prepare_v2(database_->handle,
@@ -244,7 +237,8 @@ namespace format::tbproject
                                "FROM terrain_compile WHERE asset_id=?", -1,
                                &statement, nullptr) != SQLITE_OK)
         {
-            set_error(database_->handle, error, "could not read terrain compile data");
+            if (error)
+                *error = "terrain compile data is missing; " + instructions;
             return false;
         }
         if (sqlite3_bind_text(statement, 1, map.id.c_str(), -1, SQLITE_TRANSIENT)

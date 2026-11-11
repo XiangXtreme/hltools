@@ -367,7 +367,10 @@ namespace csg
 
             copy_surface_detail_to_worldspawn(map, entity_num);
             for (int i = 0; i < entity.num_brushes; i++)
+            {
+                map.brushes[(size_t)entity.first_brush + i].entity_num = entity_num;
                 map.brushes[(size_t)entity.first_brush + i].local_clip = (int)local;
+            }
             entity.set_value("classname", "func_wall");
             entity.set_value("zhlt_collision_only", "1");
             return true;

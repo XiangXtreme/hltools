@@ -5,10 +5,16 @@
 #include <vector>
 
 #include "common/filesystem.h"
+#include "common/string_util.h"
 #include "csg/studio_bsp.h"
 #include "format/mdl/goldsrc/model.h"
 #include "support/scratch.h"
+#include "csg/bsp_output.h"
+#include "csg/brush.h"
+#include "csg/csg.h"
+#include "csg/surface_clip.h"
 #include "support/test.h"
+#include "support/test_wad.h"
 
 namespace
 {
@@ -106,7 +112,39 @@ namespace
         return path;
     }
 
-    csg::map_entity make_world()
+        void add_world_cube(csg::map_source &map, const std::string &wad_path)
+    {
+        csg::map_entity world;
+        world.set_value("classname", "worldspawn");
+        world.set_value("wad", wad_path.c_str());
+        world.first_brush = 0;
+        world.num_brushes = 1;
+
+        const math::vec3v mins{-128, -128, -64};
+        const math::vec3v maxs{128, 128, 0};
+        auto add_s = [&](const math::vec3v &p0, const math::vec3v &p1, const math::vec3v &p2) {
+            csg::brush_side side;
+            std::memcpy(side.texture.name, "STONE", 6);
+            side.planepts[0] = p0;
+            side.planepts[1] = p1;
+            side.planepts[2] = p2;
+            map.sides.push_back(side);
+        };
+        add_s({mins.x, mins.y, mins.z}, {mins.x, maxs.y, mins.z}, {mins.x, mins.y, maxs.z});
+        add_s({maxs.x, mins.y, mins.z}, {maxs.x, mins.y, maxs.z}, {maxs.x, maxs.y, mins.z});
+        add_s({mins.x, mins.y, mins.z}, {mins.x, mins.y, maxs.z}, {maxs.x, mins.y, mins.z});
+        add_s({mins.x, maxs.y, mins.z}, {maxs.x, maxs.y, mins.z}, {mins.x, maxs.y, maxs.z});
+        add_s({mins.x, mins.y, mins.z}, {maxs.x, mins.y, mins.z}, {mins.x, maxs.y, mins.z});
+        add_s({mins.x, mins.y, maxs.z}, {mins.x, maxs.y, maxs.z}, {maxs.x, maxs.y, maxs.z});
+
+        csg::map_brush brush;
+        brush.first_side = 0;
+        brush.num_sides = 6;
+        map.brushes.push_back(brush);
+        map.entities.push_back(world);
+    }
+
+csg::map_entity make_world()
     {
         csg::map_entity world;
         world.set_value("classname", "worldspawn");
@@ -329,15 +367,293 @@ suite("unit.csg.studio_bsp")
         require(map.brushes.size() == 1);
         const csg::map_brush &brush = map.brushes[0];
         require(brush.num_sides == 5);
-        float minimum = 1e9f;
-        float maximum = -1e9f;
+        vec_t minimum = 1e9;
+        vec_t maximum = -1e9;
         const csg::brush_side &front = map.sides[(std::size_t)brush.first_side];
         for (int i = 0; i < 3; i++)
         {
-            const float y = front.planepts[i].y;
+            const vec_t y = front.planepts[i].y;
             minimum = std::min(minimum, y);
             maximum = std::max(maximum, y);
         }
-        expect(maximum - minimum >= 0.45f);
+        expect(maximum - minimum >= 0.45);
+    }
+
+    test("studio_bsp.build_exacthull_hull computes correct distances on slopes and axial faces")
+    {
+        csg::exacthull_triangle tri;
+        tri.points[0] = {0, 0, 0};
+        tri.points[1] = {0, 64, 0};
+        tri.points[2] = {64, 0, -64};
+        math::vec3v n;
+        math::cross(tri.points[1] - tri.points[0], tri.points[2] - tri.points[0], n);
+        math::normalize(n);
+        tri.normal = n;
+
+        const math::vec3v half{16, 16, 36};
+        auto tree_simple = csg::build_exacthull_hull({tri}, half, false);
+        auto tree_legacy = csg::build_exacthull_hull({tri}, half, true);
+
+        require(tree_simple.valid);
+        require(tree_legacy.valid);
+        require(!tree_simple.nodes.empty());
+        require(!tree_legacy.nodes.empty());
+
+        const math::vec3v slope_n{(vec_t)(1.0 / std::sqrt(2.0)), 0, (vec_t)(1.0 / std::sqrt(2.0))};
+        vec_t slope_dist_simple = -1;
+        for (const auto &p : tree_simple.planes)
+        {
+            if (math::length(p.normal - slope_n) < 1e-3)
+            {
+                slope_dist_simple = p.dist;
+                break;
+            }
+        }
+        vec_t slope_dist_legacy = -1;
+        for (const auto &p : tree_legacy.planes)
+        {
+            if (math::length(p.normal - slope_n) < 1e-3)
+            {
+                slope_dist_legacy = p.dist;
+                break;
+            }
+        }
+        require(slope_dist_simple > 0);
+        require(slope_dist_legacy > 0);
+
+        const vec_t expected_simple = (vec_t)(52.0 / std::sqrt(2.0));
+        const vec_t expected_legacy = (vec_t)26.0;
+        expect(std::fabs(slope_dist_simple - expected_simple) < 0.1);
+        expect(std::fabs(slope_dist_legacy - expected_legacy) < 0.1);
+        expect(slope_dist_simple > slope_dist_legacy + 10.0);
+
+        vec_t x_dist_simple = -1, x_dist_legacy = -1;
+        for (const auto &p : tree_simple.planes)
+            if (math::length(p.normal - math::vec3v{1, 0, 0}) < 1e-3)
+                x_dist_simple = p.dist;
+        for (const auto &p : tree_legacy.planes)
+            if (math::length(p.normal - math::vec3v{1, 0, 0}) < 1e-3)
+                x_dist_legacy = p.dist;
+        require(x_dist_simple > 0);
+        require(x_dist_legacy > 0);
+        expect(std::fabs(x_dist_simple - (64 + 16)) < 0.1);
+        expect(std::fabs(x_dist_legacy - (64 + 16)) < 0.1);
+        expect(std::fabs(x_dist_simple - x_dist_legacy) < 1e-4);
+    }
+
+    test("studio_bsp.collision mode 2 (ExactHull) generates direct clip model and bypasses CSG hull expansion")
+    {
+        const std::filesystem::path root = test_support::scratch_directory("csg_studio_exacthull");
+        write_model(root);
+        const std::string wad_path = (root / "maps" / "test.wad").string();
+        test_wad::write(wad_path, {"STONE"});
+
+        csg::map_source map;
+        add_world_cube(map, wad_path);
+
+        csg::map_entity entity = make_studio_entity();
+        entity.set_value("zhlt_studiobsp_collision", "2");
+        map.entities.push_back(entity);
+
+        csg::csg_options options;
+        options.brush.clip = csg::clip_type::simple;
+        options.wad.map_path = (root / "maps" / "test.map").string();
+        options.wad.wad_textures = true;
+        csg::csg_result result = csg::run_csg(map, options);
+
+        csg::intermediate_data data = csg::build_intermediate_data(result, options.brush);
+        require(data.surface_clips.size() == 2);
+        expect(!data.surface_clips[0].valid);
+        expect(data.surface_clips[1].valid);
+        expect(data.surface_clips[1].hulls[1].valid);
+        expect(data.surface_clips[1].hulls[3].valid);
+        expect(!data.surface_clips[1].hulls[1].nodes.empty());
+        expect(!data.surface_clips[1].hulls[3].nodes.empty());
+        expect(data.surfaces[1].rfind("-1 -1 -1 -1 -1\n-1 -1 -1 -1 -1\n") != std::string::npos);
+        expect(data.surfaces[2].rfind("-1 -1 -1 -1 -1\n-1 -1 -1 -1 -1\n") != std::string::npos);
+        expect(data.surfaces[3].rfind("-1 -1 -1 -1 -1\n-1 -1 -1 -1 -1\n") != std::string::npos);
+        expect(data.brushes[1] == "-1\n-1\n");
+        expect(data.brushes[2] == "-1\n-1\n");
+        expect(data.brushes[3] == "-1\n-1\n");
+    }
+
+    test("studio_bsp.collision mode 3 (ExactHull + Legacytrim) generates direct clip model with slope distance")
+    {
+        const std::filesystem::path root = test_support::scratch_directory("csg_studio_exacthull_legacy");
+        write_model(root);
+        const std::string wad_path = (root / "maps" / "test.wad").string();
+        test_wad::write(wad_path, {"STONE"});
+
+        csg::map_source map;
+        add_world_cube(map, wad_path);
+
+        csg::map_entity entity = make_studio_entity();
+        entity.set_value("zhlt_studiobsp_collision", "3");
+        map.entities.push_back(entity);
+
+        csg::csg_options options;
+        options.brush.clip = csg::clip_type::simple;
+        options.wad.map_path = (root / "maps" / "test.map").string();
+        options.wad.wad_textures = true;
+        csg::csg_result result = csg::run_csg(map, options);
+
+        csg::intermediate_data data = csg::build_intermediate_data(result, options.brush);
+        require(data.surface_clips.size() == 2);
+        expect(!data.surface_clips[0].valid);
+        expect(data.surface_clips[1].valid);
+        expect(data.surface_clips[1].hulls[1].valid);
+        expect(data.surface_clips[1].hulls[3].valid);
+        expect(!data.surface_clips[1].hulls[1].nodes.empty());
+        expect(!data.surface_clips[1].hulls[3].nodes.empty());
+        expect(data.surfaces[1].rfind("-1 -1 -1 -1 -1\n-1 -1 -1 -1 -1\n") != std::string::npos);
+        expect(data.brushes[1] == "-1\n-1\n");
+    }
+
+    test("studio_bsp.exacthull world mode is forced to submodel with warning")
+    {
+        const std::filesystem::path root = test_support::scratch_directory("csg_studio_exacthull_world");
+        write_model(root);
+
+        csg::map_source map;
+        map.entities.push_back(make_world());
+        csg::map_entity entity = make_studio_entity("zhlt_studiobsp_world");
+        entity.set_value("zhlt_studiobsp_collision", "2");
+        map.entities.push_back(entity);
+
+        csg::inject_studio_brushes(map, (root / "maps" / "test.map").string());
+
+        expect(std::string(map.entities[1].value("classname")) == "func_wall");
+        expect(map.entities[1].num_brushes == 2);
+        expect(map.entities[0].num_brushes == 0);
+    }
+
+    test("studio_bsp.decoupled collision retains original entity and spawns collision submodel")
+    {
+        const std::filesystem::path root = test_support::scratch_directory("csg_studio_decoupled_inject");
+        write_model(root);
+
+        csg::map_source map;
+        map.entities.push_back(make_world());
+
+        csg::map_entity entity;
+        entity.set_value("classname", "cycler_sprite");
+        entity.set_value("model", "models/props/bake.mdl");
+        entity.set_value("origin", "128 64 32");
+        entity.set_value("angles", "0 90 0");
+        entity.set_value("zhlt_studiobsp", "0");
+        entity.set_value("zhlt_studiobsp_collision", "2");
+        entity.set_value("zhlt_studioshadow", "1");
+        map.entities.push_back(entity);
+
+        csg::inject_studio_brushes(map, (root / "maps" / "test.map").string());
+
+        require(map.entities.size() == 3);
+
+        const csg::map_entity &orig = map.entities[1];
+        expect(std::string(orig.value("classname")) == "cycler_sprite");
+        expect(std::string(orig.value("model")) == "models/props/bake.mdl");
+        expect(std::string(orig.value("origin")) == "128 64 32");
+        expect(std::string(orig.value("angles")) == "0 90 0");
+        expect(std::string(orig.value("zhlt_studioshadow")) == "1");
+        expect(orig.num_brushes == 0);
+
+        const csg::map_entity &col = map.entities[2];
+        expect(std::string(col.value("classname")) == "func_wall");
+        expect(std::string(col.value("zhlt_collision_only")) == "1");
+        expect(std::string(col.value("zhlt_studiobsp_collision")) == "2");
+        expect(col.num_brushes == 2);
+    }
+
+    test("studio_bsp.decoupled collision runs through full CSG pipeline with ExactHull")
+    {
+        const std::filesystem::path root = test_support::scratch_directory("csg_studio_decoupled_full");
+        write_model(root);
+        const std::string wad_path = (root / "maps" / "test.wad").string();
+        test_wad::write(wad_path, {"STONE"});
+
+        csg::map_source map;
+        add_world_cube(map, wad_path);
+
+        csg::map_entity entity;
+        entity.set_value("classname", "cycler_sprite");
+        entity.set_value("model", "models/props/bake.mdl");
+        entity.set_value("origin", "0 0 0");
+        entity.set_value("zhlt_studiobsp_collision", "2");
+        map.entities.push_back(entity);
+
+        csg::csg_options options;
+        options.brush.clip = csg::clip_type::simple;
+        options.wad.map_path = (root / "maps" / "test.map").string();
+        options.wad.wad_textures = true;
+        csg::csg_result result = csg::run_csg(map, options);
+
+        require(result.map.entities.size() == 3);
+        expect(std::string(result.map.entities[1].value("classname")) == "cycler_sprite");
+        expect(std::string(result.map.entities[1].value("model")) == "models/props/bake.mdl");
+        expect(std::string(result.map.entities[2].value("classname")) == "func_wall");
+        expect(std::string(result.map.entities[2].value("zhlt_collision_only")) == "1");
+
+        csg::intermediate_data data = csg::build_intermediate_data(result, options.brush);
+        csg::build_bsp_data(result);
+        expect(std::string(result.map.entities[2].value("model")) == "*1");
+        require(data.surface_clips.size() == 2);
+        expect(!data.surface_clips[0].valid);
+        expect(data.surface_clips[1].valid);
+        expect(data.surface_clips[1].hulls[1].valid);
+        expect(data.surface_clips[1].hulls[3].valid);
+        expect(!data.surface_clips[1].hulls[1].nodes.empty());
+        expect(!data.surface_clips[1].hulls[3].nodes.empty());
+        // For hull 0, collision_only emits empty face sequence for submodel
+        expect(data.surfaces[0].rfind("-1 -1 -1 -1 -1\n-1 -1 -1 -1 -1\n") != std::string::npos);
+        expect(data.surfaces[1].rfind("-1 -1 -1 -1 -1\n-1 -1 -1 -1 -1\n") != std::string::npos);
+    }
+
+    test("studio_bsp.collision only proxy mode strips mdl and creates invisible func_wall")
+    {
+        const std::filesystem::path root = test_support::scratch_directory("csg_studio_col_proxy");
+        write_model(root);
+        const std::string wad_path = (root / "maps" / "test.wad").string();
+        test_wad::write(wad_path, {"STONE"});
+
+        csg::map_source map;
+        add_world_cube(map, wad_path);
+
+        csg::map_entity entity;
+        entity.set_value("classname", "cycler_sprite");
+        entity.set_value("model", "models/props/bake.mdl");
+        entity.set_value("origin", "128 64 32");
+        entity.set_value("angles", "0 90 0");
+        entity.set_value("zhlt_studiobsp", "2");
+        entity.set_value("zhlt_studiobsp_collision", "2");
+        map.entities.push_back(entity);
+
+        csg::csg_options options;
+        options.brush.clip = csg::clip_type::simple;
+        options.wad.map_path = (root / "maps" / "test.map").string();
+        options.wad.wad_textures = true;
+        csg::csg_result result = csg::run_csg(map, options);
+
+        // Transformed in-place: map entities count stays 2 (worldspawn + func_wall)
+        require(result.map.entities.size() == 2);
+        expect(std::string(result.map.entities[1].value("classname")) == "func_wall");
+        expect(std::string(result.map.entities[1].value("zhlt_collision_only")) == "1");
+        expect(std::string(result.map.entities[1].value("zhlt_studiobsp_collision")) == "2");
+        expect(std::string(result.map.entities[1].value("origin")).empty());
+
+        csg::intermediate_data data = csg::build_intermediate_data(result, options.brush);
+        csg::build_bsp_data(result);
+
+        expect(std::string(result.map.entities[1].value("model")) == "*1");
+        // Verify MDL path is nowhere in entity 1's values
+        for (const auto &pair : result.map.entities[1].pairs)
+            expect(pair.second.find("bake.mdl") == std::string::npos);
+
+        require(data.surface_clips.size() == 2);
+        expect(!data.surface_clips[0].valid);
+        expect(data.surface_clips[1].valid);
+        expect(data.surface_clips[1].hulls[1].valid);
+        expect(data.surface_clips[1].hulls[3].valid);
+        expect(data.surfaces[0].rfind("-1 -1 -1 -1 -1\n-1 -1 -1 -1 -1\n") != std::string::npos);
+        expect(data.surfaces[1].rfind("-1 -1 -1 -1 -1\n-1 -1 -1 -1 -1\n") != std::string::npos);
     }
 }

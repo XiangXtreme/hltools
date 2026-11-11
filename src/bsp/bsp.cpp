@@ -1,5 +1,6 @@
 #include "bsp.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
@@ -59,6 +60,33 @@ namespace bsp
             }
         }
 
+        void free_surfchain(surfchain *surfs)
+        {
+            if (!surfs)
+                return;
+            for (surface *s = surfs->surfaces, *next_s = nullptr; s; s = next_s)
+            {
+                next_s = s->next;
+                for (face *f = s->faces, *next_f = nullptr; f; f = next_f)
+                {
+                    next_f = f->next;
+                    free_face(f);
+                }
+                delete s;
+            }
+            delete surfs;
+        }
+
+        void free_brush_list(brush *brushes)
+        {
+            while (brushes)
+            {
+                brush *next = brushes->next;
+                free_brush(brushes);
+                brushes = next;
+            }
+        }
+
         bool process_model(bsp_state &state)
         {
             surfchain *surfs = read_surfs(state, 0);
@@ -76,37 +104,64 @@ namespace bsp
             format::dmodel_t *model = &map.models[(size_t)modnum];
             state.nummodels = modnum + 1;
 
+            const format::entity *model_entity = entity_for_model(state, modnum);
+            const bool collision_only = model_entity != nullptr
+                && std::strcmp(model_entity->value("zhlt_collision_only"), "1") == 0;
+            const bool direct_surface_clip = modnum >= 0
+                && modnum < (int)state.surface_clips.size()
+                && state.surface_clips[(size_t)modnum].valid;
+
             state.hullnum = 0;
             model->mins[0] = model->mins[1] = model->mins[2] = 99999;
             model->maxs[0] = model->maxs[1] = model->maxs[2] = -99999;
             grow_model_bounds(state, model, surfs, 0);
-
-            // the tree
-            node *nodes = solid_bsp(state, surfs, detailbrushes, modnum == 0);
-
-            // assume non world bmodels are simple
-            if (modnum == 0 && !state.options.nofill)
+            if (direct_surface_clip)
             {
-                if (!state.options.noinsidefill)
-                    fill_inside(state, nodes);
-                nodes = fill_outside(state, nodes, !state.leaked, 0); // leakfile if not yet leaked
+                const direct_clip::model &direct = state.surface_clips[(size_t)modnum];
+                for (int axis = 0; axis < 3; axis++)
+                {
+                    model->mins[axis] = std::min(model->mins[axis],
+                        (float)std::min(direct.hulls[1].mins[axis], direct.hulls[3].mins[axis]));
+                    model->maxs[axis] = std::max(model->maxs[axis],
+                        (float)std::max(direct.hulls[1].maxs[axis], direct.hulls[3].maxs[axis]));
+                }
             }
-            delete surfs;
 
-            free_portals(nodes);
+            node *nodes = nullptr;
+            if (collision_only)
+            {
+                free_surfchain(surfs);
+                free_brush_list(detailbrushes);
+                make_face_edges(state);
+                nodes = alloc_node();
+                nodes->planenum = -1;
+            }
+            else
+            {
+                // the tree
+                nodes = solid_bsp(state, surfs, detailbrushes, modnum == 0);
 
-            // fix tjunctions
-            tjunc(state, nodes);
+                // assume non world bmodels are simple
+                if (modnum == 0 && !state.options.nofill)
+                {
+                    if (!state.options.noinsidefill)
+                        fill_inside(state, nodes);
+                    nodes = fill_outside(state, nodes, !state.leaked, 0); // leakfile if not yet leaked
+                }
+                delete surfs;
 
-            make_face_edges(state);
+                free_portals(nodes);
+
+                // fix tjunctions
+                tjunc(state, nodes);
+
+                make_face_edges(state);
+            }
 
             // emit the faces for the bsp file
             model->headnode[0] = (int)map.nodes.size();
             model->firstface = (int)map.faces.size();
             bool novisiblebrushes = false;
-            const format::entity *model_entity = entity_for_model(state, modnum);
-            const bool collision_only = model_entity != nullptr
-                && std::strcmp(model_entity->value("zhlt_collision_only"), "1") == 0;
             // model->headnode[0] < 0 will crash the engine, so split it
             if (collision_only || nodes->planenum == -1)
             {
@@ -114,14 +169,9 @@ namespace bsp
                 // A collision-only surface model still needs a valid empty
                 // draw tree, but must not emit its ordinary hull-0 faces.
                 // The direct surface tree is installed into hulls 1-3 below.
-                if (collision_only)
-                {
-                    nodes->planenum = -1;
-                    nodes->markfaces = nullptr;
-                    nodes->faces = nullptr;
-                }
                 if (nodes->markfaces && nodes->markfaces[0] != nullptr)
                     err::fatal("process_model: empty solid entity");
+                delete[] nodes->markfaces;
                 if (state.planes.empty())
                     err::fatal("no valid planes");
                 nodes->planenum = 0; // arbitrary plane
@@ -163,9 +213,6 @@ namespace bsp
             else
             {
                 // the clipping hulls are simpler
-                const bool direct_surface_clip = modnum >= 0
-                    && modnum < (int)state.surface_clips.size()
-                    && state.surface_clips[(size_t)modnum].valid;
                 for (state.hullnum = 1; state.hullnum < num_hulls; state.hullnum++)
                 {
                     surfs = read_surfs(state, state.hullnum);
@@ -175,13 +222,8 @@ namespace bsp
                         // The direct Python tree replaces this model's
                         // generated clip hulls. Still consume the streams so
                         // the next model starts at the correct sidecar block.
-                        delete surfs;
-                        while (detailbrushes)
-                        {
-                            brush *next = detailbrushes->next;
-                            free_brush(detailbrushes);
-                            detailbrushes = next;
-                        }
+                        free_surfchain(surfs);
+                        free_brush_list(detailbrushes);
                         model->headnode[state.hullnum] = contents_empty;
                         continue;
                     }

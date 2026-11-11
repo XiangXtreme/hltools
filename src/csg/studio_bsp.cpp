@@ -372,7 +372,21 @@ namespace csg
             return false;
         }
 
-        void strip_studio_keys(map_entity &entity, bool world)
+        int parse_collision_mode(const char *value)
+        {
+            if (!value || *value == '\0')
+                return 0;
+            if (std::strcmp(value, "2") == 0 || str::iequals(value, "exacthull"))
+                return 2;
+            if (std::strcmp(value, "3") == 0 || str::iequals(value, "exacthull_legacy")
+                || str::iequals(value, "legacytrim"))
+                return 3;
+            if (std::strcmp(value, "1") == 0 || str::iequals(value, "yes") || str::iequals(value, "true"))
+                return 1;
+            return 0;
+        }
+
+        void strip_studio_keys(map_entity &entity, bool world, int collision_mode)
         {
             entity.set_value("classname", world ? "info_null" : "func_wall");
             if (world)
@@ -397,7 +411,12 @@ namespace csg
             entity.set_value("scale", "");
             entity.set_value("xform", "");
             entity.set_value("zhlt_studiobsp", "");
-            entity.set_value("zhlt_studiobsp_collision", "");
+            if (collision_mode == 2)
+                entity.set_value("zhlt_studiobsp_collision", "2");
+            else if (collision_mode == 3)
+                entity.set_value("zhlt_studiobsp_collision", "3");
+            else
+                entity.set_value("zhlt_studiobsp_collision", "");
             entity.set_value("zhlt_studiobsp_doublesided", "");
             entity.set_value("zhlt_studiobsp_thickness", "");
             entity.set_value("zhlt_studiobsp_world", "");
@@ -448,14 +467,14 @@ namespace csg
         }
 
         bool build_entity(map_source &map, texture_registry &registry, int entity_index,
-                          int target_entity, bool world, const std::string &map_path,
+                          int target_entity, bool world, bool bake_bsp, const std::string &map_path,
                           int &generated)
         {
             map_entity &entity = map.entities[(std::size_t)entity_index];
             const std::string model_name = entity.value("model");
             if (model_name.empty())
             {
-                logging::warn("zhlt_studiobsp: entity %d has zhlt_studiobsp but no model",
+                logging::warn("zhlt_studiobsp: entity %d has studio bsp/collision requested but no model",
                               entity_index);
                 return false;
             }
@@ -474,6 +493,8 @@ namespace csg
                     origin = {x, y, z};
                 if (std::sscanf(entity.value("angles"), "%lf %lf %lf", &x, &y, &z) == 3)
                     angles = {x, y, z};
+                else if (std::sscanf(entity.value("angle"), "%lf", &y) == 1)
+                    angles = {0, y, 0};
                 angles[0] = -angles[0];
 
                 const bool explicit_scale = *entity.value("scale") != '\0'
@@ -522,7 +543,8 @@ namespace csg
             const bool double_sided = *entity.value("zhlt_studiobsp_doublesided") == '\0'
                 || entity.int_value("zhlt_studiobsp_doublesided") != 0;
             (void)double_sided; // brush mode always needs a closed, textured solid
-            const bool player_collision = entity.int_value("zhlt_studiobsp_collision") != 0;
+            const int collision_mode = parse_collision_mode(entity.value("zhlt_studiobsp_collision"));
+            const bool player_collision = (collision_mode == 1);
 
             std::vector<byte> data;
             std::string resolved;
@@ -543,10 +565,37 @@ namespace csg
                               error.c_str());
                 return false;
             }
-            if (model.textures.empty() && !model.meshes.empty())
+
+            if (bake_bsp)
             {
-                logging::warn("zhlt_studiobsp: model '%s' has no embedded skins", model_name.c_str());
-                return false;
+                if (model.textures.empty() && !model.meshes.empty())
+                {
+                    logging::warn("zhlt_studiobsp: model '%s' has no embedded skins", model_name.c_str());
+                    return false;
+                }
+            }
+            else
+            {
+                int max_material = 0;
+                for (const format::studio_mesh &mesh : model.meshes)
+                    max_material = std::max(max_material, mesh.material);
+
+                format::studio_texture dummy_tex;
+                dummy_tex.name = "zhlt_col";
+                dummy_tex.image.width = 16;
+                dummy_tex.image.height = 16;
+                dummy_tex.image.pixels.assign(256, 0);
+                dummy_tex.image.palette = {};
+
+                if ((int)model.textures.size() <= max_material)
+                    model.textures.resize((std::size_t)(max_material + 1), dummy_tex);
+                for (format::studio_texture &tex : model.textures)
+                {
+                    tex.image.width = 16;
+                    tex.image.height = 16;
+                    tex.image.pixels.assign(256, 0);
+                    tex.image.palette = {};
+                }
             }
 
             std::vector<std::string> texture_names(model.textures.size());
@@ -741,8 +790,15 @@ namespace csg
                               "triangle(s)",
                               model_name.c_str(), fallback_mappings);
             }
-            logging::info("  %-14s %d brushes (%s)\n", "studiobsp", (int)count,
-                          world ? "world" : "func_wall");
+            if (bake_bsp)
+            {
+                logging::info("  %-14s %d brushes (%s)\n", "studiobsp", (int)count,
+                              world ? "world" : "func_wall");
+            }
+            else
+            {
+                logging::info("  %-14s %d collision brushes (func_wall)\n", "studiobsp", (int)count);
+            }
             return true;
         }
     }
@@ -755,20 +811,102 @@ namespace csg
             registry.map_names.insert(uppercase(side.texture.name));
 
         int generated = 0;
-        for (int i = 1; i < (int)map.entities.size(); i++)
+        const int original_entity_count = (int)map.entities.size();
+        for (int i = 1; i < original_entity_count; i++)
         {
-            if (!map.entities[(std::size_t)i].int_value("zhlt_studiobsp"))
-                continue;
-            const bool world = map.entities[(std::size_t)i].int_value("zhlt_studiobsp_world") != 0;
-            const bool built = build_entity(map, registry, i, world ? 0 : i, world, map_path,
-                                            generated);
-            if (!built)
+            const char *studiobsp_raw = map.entities[(std::size_t)i].value("zhlt_studiobsp");
+            int bake_mode = map.entities[(std::size_t)i].int_value("zhlt_studiobsp");
+            if (str::iequals(studiobsp_raw, "collision_only") || str::iequals(studiobsp_raw, "nodraw")
+                || str::iequals(studiobsp_raw, "invisible")
+                || map.entities[(std::size_t)i].int_value("zhlt_studiobsp_collision_only") != 0
+                || map.entities[(std::size_t)i].int_value("zhlt_studiobsp_nodraw") != 0)
+            {
+                bake_mode = 2;
+            }
+
+            int collision_mode =
+                parse_collision_mode(map.entities[(std::size_t)i].value("zhlt_studiobsp_collision"));
+
+            if (bake_mode == 2 && collision_mode == 0)
+                collision_mode = 2;
+
+            if (bake_mode == 0 && collision_mode == 0)
                 continue;
 
-            map_entity &entity = map.entities[(std::size_t)i];
-            strip_studio_keys(entity, world);
-            if (world)
-                entity.num_brushes = 0;
+            if (bake_mode == 1)
+            {
+                bool world = map.entities[(std::size_t)i].int_value("zhlt_studiobsp_world") != 0;
+                if (world && (collision_mode == 2 || collision_mode == 3))
+                {
+                    logging::warn("zhlt_studiobsp: entity %d: ExactHull collision requires a submodel; forcing world = 0 (func_wall)\n", i);
+                    world = false;
+                }
+                const bool built = build_entity(map, registry, i, world ? 0 : i, world, true,
+                                                map_path, generated);
+                if (!built)
+                    continue;
+
+                map_entity &entity = map.entities[(std::size_t)i];
+                strip_studio_keys(entity, world, collision_mode);
+                if (world)
+                    entity.num_brushes = 0;
+            }
+            else if (bake_mode == 2)
+            {
+                if (map.entities[(std::size_t)i].int_value("zhlt_studiobsp_world") != 0)
+                {
+                    logging::warn("zhlt_studiobsp: entity %d: collision proxy requires a submodel; ignoring zhlt_studiobsp_world\n", i);
+                }
+
+                const bool built = build_entity(map, registry, i, i, false, false,
+                                                map_path, generated);
+                if (!built)
+                    continue;
+
+                map_entity &entity = map.entities[(std::size_t)i];
+                strip_studio_keys(entity, false, collision_mode);
+                entity.set_value("zhlt_collision_only", "1");
+                entity.set_value("zhlt_lightflags", "");
+            }
+            else
+            {
+                if (map.entities[(std::size_t)i].int_value("zhlt_studiobsp_world") != 0)
+                {
+                    logging::warn("zhlt_studiobsp: entity %d: decoupled studio model collision requires a submodel; ignoring zhlt_studiobsp_world\n", i);
+                }
+
+                map_entity col_ent;
+                col_ent.set_value("classname", "func_wall");
+                col_ent.set_value("zhlt_collision_only", "1");
+                if (collision_mode == 2)
+                    col_ent.set_value("zhlt_studiobsp_collision", "2");
+                else if (collision_mode == 3)
+                    col_ent.set_value("zhlt_studiobsp_collision", "3");
+                else
+                    col_ent.set_value("zhlt_studiobsp_collision", "1");
+
+                col_ent.first_brush = (int)map.brushes.size();
+                col_ent.num_brushes = 0;
+                const int target_entity = (int)map.entities.size();
+                map.entities.push_back(std::move(col_ent));
+
+                const bool built = build_entity(map, registry, i, target_entity, false, false,
+                                                map_path, generated);
+                if (!built)
+                {
+                    map.entities.pop_back();
+                    continue;
+                }
+
+                // Strip studiobsp-specific keys from original entity so downstream CSG won't touch them,
+                // but keep original classname, model, origin, angles, rendermode, zhlt_studioshadow, etc.!
+                map_entity &orig_ent = map.entities[(std::size_t)i];
+                orig_ent.set_value("zhlt_studiobsp", "");
+                orig_ent.set_value("zhlt_studiobsp_collision", "");
+                orig_ent.set_value("zhlt_studiobsp_doublesided", "");
+                orig_ent.set_value("zhlt_studiobsp_thickness", "");
+                orig_ent.set_value("zhlt_studiobsp_world", "");
+            }
         }
 
         if (generated)

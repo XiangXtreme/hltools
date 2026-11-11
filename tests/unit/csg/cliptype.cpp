@@ -153,9 +153,25 @@ suite("unit.csg.cliptype")
 
         require(result.map.entities.size() == 2);
         expect(std::string(result.map.entities[1].value("classname")) == "func_wall");
+        expect(std::string(result.map.entities[1].value("zhlt_collision_only")) == "1");
         require(result.map.entities[1].num_brushes == 1);
         expect(result.map.brushes[(size_t)result.map.entities[1].first_brush].local_clip
                == (int)csg::clip_type::legacytrim);
+        require(result.entities.size() == 2);
+        require(result.entities[1].brushes.size() == 1);
+        expect(!result.entities[1].brushes[0].hulls[0].faces.empty());
+        expect(result.entities[1].brushes[0].hulls[1].faces.empty());
+
+        csg::intermediate_data data = csg::build_intermediate_data(result, options.brush);
+        require(data.surface_clips.size() == 2);
+        expect(!data.surface_clips[0].valid);
+        expect(data.surface_clips[1].valid);
+        expect(data.surface_clips[1].hulls[1].valid);
+        expect(data.surface_clips[1].hulls[3].valid);
+        expect(!data.surface_clips[1].hulls[1].nodes.empty());
+        expect(data.surfaces[1] == "-1 -1 -1 -1 -1\n-1 -1 -1 -1 -1\n");
+        expect(data.surfaces[2] == "-1 -1 -1 -1 -1\n-1 -1 -1 -1 -1\n");
+        expect(data.surfaces[3] == "-1 -1 -1 -1 -1\n-1 -1 -1 -1 -1\n");
     }
 
     test("cliptype.func_group and unknown values inherit the global setting")

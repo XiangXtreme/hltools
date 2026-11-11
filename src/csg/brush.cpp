@@ -1603,6 +1603,12 @@ namespace csg
         if (brush.noclip)
             return out;
 
+        if (brush.entity_num > 0
+            && out.surface_legacytrim
+            && out.contents == content::solid
+            && std::strcmp(map.entities[(size_t)brush.entity_num].value("zhlt_collision_only"), "1") == 0)
+            return out;
+
         build_clip_hulls(brush, planes, planes, out, options);
         return out;
     }

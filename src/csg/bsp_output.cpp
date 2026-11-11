@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <iomanip>
 #include <sstream>
 #include <utility>
@@ -643,15 +644,28 @@ namespace csg
             }
         }
 
-        std::string hull_surface_file(const csg_result &result, int hull)
+        std::string hull_surface_file(const csg_result &result, int hull,
+                                      const std::vector<direct_clip::model> &surface_clips)
         {
             std::string out;
+            size_t model_index = 0;
             for (const built_entity &entity : result.entities)
             {
                 if (entity.entity_num < 0
                     || entity.entity_num >= (int)result.map.entities.size()
                     || result.map.entities[(size_t)entity.entity_num].num_brushes <= 0)
                     continue;
+
+                const size_t current_model = model_index++;
+                const bool direct_clip = current_model < surface_clips.size()
+                    && surface_clips[current_model].valid;
+                const bool collision_only = std::strcmp(
+                    result.map.entities[(size_t)entity.entity_num].value("zhlt_collision_only"), "1") == 0;
+                if (direct_clip && (hull > 0 || collision_only))
+                {
+                    out += "-1 -1 -1 -1 -1\n";
+                    continue;
+                }
 
                 std::vector<int> brush_order = sorted_brush_indexes(entity);
                 for (int order_pos = 0; order_pos < (int)brush_order.size(); order_pos++)
@@ -666,15 +680,28 @@ namespace csg
             return out;
         }
 
-        std::string hull_detail_file(const csg_result &result, int hull)
+        std::string hull_detail_file(const csg_result &result, int hull,
+                                     const std::vector<direct_clip::model> &surface_clips)
         {
             std::string out;
+            size_t model_index = 0;
             for (const built_entity &entity : result.entities)
             {
                 if (entity.entity_num < 0
                     || entity.entity_num >= (int)result.map.entities.size()
                     || result.map.entities[(size_t)entity.entity_num].num_brushes <= 0)
                     continue;
+
+                const size_t current_model = model_index++;
+                const bool direct_clip = current_model < surface_clips.size()
+                    && surface_clips[current_model].valid;
+                const bool collision_only = std::strcmp(
+                    result.map.entities[(size_t)entity.entity_num].value("zhlt_collision_only"), "1") == 0;
+                if (direct_clip && (hull > 0 || collision_only))
+                {
+                    out += "-1\n";
+                    continue;
+                }
 
                 for (int brush_index : sorted_brush_indexes(entity))
                 {
@@ -764,11 +791,43 @@ namespace csg
                                               const brush_build_options &options)
     {
         intermediate_data data;
+        bool wants_surface_clips = options.clip == clip_type::legacytrim;
+        if (!wants_surface_clips)
+        {
+            for (const auto &entity : result.entities)
+            {
+                for (const auto &brush : entity.brushes)
+                {
+                    if (brush.surface_legacytrim)
+                    {
+                        wants_surface_clips = true;
+                        break;
+                    }
+                }
+                if (wants_surface_clips)
+                    break;
+                if (entity.entity_num >= 0 && entity.entity_num < (int)result.map.entities.size())
+                {
+                    const auto &map_ent = result.map.entities[(size_t)entity.entity_num];
+                    const char *col = map_ent.value("zhlt_studiobsp_collision");
+                    if (col && (std::strcmp(col, "2") == 0 || std::strcmp(col, "3") == 0
+                                || str::iequals(col, "exacthull") || str::iequals(col, "exacthull_legacy")
+                                || str::iequals(col, "legacytrim")))
+                    {
+                        wants_surface_clips = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if (wants_surface_clips)
+            data.surface_clips = build_surface_clip_models(result, options);
+
         for (int hull = 0; hull < num_hulls; hull++)
         {
             validate_detail_brushes(result, hull);
-            data.surfaces[hull] = hull_surface_file(result, hull);
-            data.brushes[hull] = hull_detail_file(result, hull);
+            data.surfaces[hull] = hull_surface_file(result, hull, data.surface_clips);
+            data.brushes[hull] = hull_detail_file(result, hull, data.surface_clips);
         }
 
         for (int hull = 0; hull < num_hulls; hull++)
@@ -785,13 +844,6 @@ namespace csg
         }
 
         data.planes = plane_file_bytes(result.planes);
-        bool wants_surface_clips = options.clip == clip_type::legacytrim;
-        if (!wants_surface_clips)
-            for (const auto &entity : result.entities)
-                for (const auto &brush : entity.brushes)
-                    wants_surface_clips = wants_surface_clips || brush.surface_legacytrim;
-        if (wants_surface_clips)
-            data.surface_clips = build_surface_clip_models(result, options);
         return data;
     }
 
