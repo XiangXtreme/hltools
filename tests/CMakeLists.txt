@@ -62,6 +62,7 @@ add_hltools_unit(unit_common
     SOURCES
         unit/common/binary_io.cpp
         unit/common/build_info.cpp
+        unit/common/cmdline.cpp
     LIBRARIES hltools_common
     LABEL unit.common)
 
@@ -122,6 +123,12 @@ add_hltools_unit(unit_math
     SOURCES unit/math/winding.cpp
     LIBRARIES hltools_math
     LABEL unit.math)
+
+add_hltools_unit(unit_vis
+    PREFIX "unit.vis."
+    SOURCES unit/vis/portals.cpp
+    LIBRARIES hltools_vis
+    LABEL unit.vis)
 
 add_hltools_unit(unit_bsp
     PREFIX "unit.bsp."
@@ -245,6 +252,13 @@ add_test(NAME integration.tools.bsp_port_help
     COMMAND $<TARGET_FILE:hltools> bsp port -h)
 set_tests_properties(integration.tools.bsp_port_help PROPERTIES
     LABELS "integration;tools;port")
+
+add_test(NAME integration.cli.invalid_integer
+    COMMAND ${CMAKE_COMMAND}
+        "-DHLTOOLS_EXE=$<TARGET_FILE:hltools>"
+        "-DSCRATCH=${HLTOOLS_TEST_SCRATCH_DIRECTORY}/invalid_integer"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/integration/cli/invalid_integer.cmake")
+set_tests_properties(integration.cli.invalid_integer PROPERTIES LABELS "integration;cli")
 
 # these checks need the feature rich compiled bsp fixture they remain build
 # targets until that fixture is generated as part of ctest rather than by hand

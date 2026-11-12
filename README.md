@@ -519,7 +519,7 @@ Quality and performance:
 | `-extra` | Use a 3 by 3 sample grid for each lightmap luxel and raise the bounce default to `12`. An explicit `-bounce` value takes precedence and `-fast` disables both effects | Off |
 | `-fast` | Use faster sample gathering while disabling bounce lighting and soft sky sampling | Off |
 | `-gpu` | Use approximate Vulkan compute for direct light gathering and scalar transfer form factors. Unsupported work falls back to the CPU | Off |
-| `-bounce <n>` | Set the number of radiosity bounce passes. `-fast` forces the value to `0` | `8` or `12` with `-extra` |
+| `-bounce <n>` | Set the non-negative number of radiosity bounce passes. `-fast` forces the value to `0` | `8` or `12` with `-extra` |
 | `-chop <n>` | Set the base patch size for surfaces that are not accurate texlight emitters | `64` |
 | `-texchop <n>` | Set the base patch size for accurate texlight emitters | `32` |
 | `-vismatrix <type>` | Select `normal` for a dense matrix limited to 65,535 patches, `sparse` for a sparse matrix with a higher patch limit or `off` to test visibility while transfers are built without storing a matrix | `sparse` |
@@ -911,8 +911,8 @@ Brushes may not mix incompatible contents. ORIGIN and BOUNDINGBOX brushes are in
 | `zhlt_minsmaxs` | Replaces brush model bounds after subtracting the entity origin | Bounds from compiled geometry |
 | `info_overview_point` | Makes the containing leaf see every visibility leaf | `reverse 0` |
 | `info_overview_point reverse 1` | Makes every visibility leaf see the containing leaf | `reverse 0` |
-| `info_portal target <name>` | Adds one way visibility from its containing leaf to the matching `info_leaf` | No connection without a target |
-| `info_portal neighbor <0..16>` | Also grants the target visibility to source leaves up to this many portal hops away. Values are clamped to the range | `0` |
+| `info_portal target <name>` | Adds one way visibility from its containing leaf to the matching `info_leaf`. A missing named target produces a warning and no connection | No connection without a target |
+| `info_portal neighbor <0..16>` | Also grants this target visibility to source leaves up to this many shortest portal hops away. Each connection has its own value, clamped to the range | `0` |
 | `info_leaf targetname <name>` | Supplies the destination leaf for matching `info_portal` entities. The last matching entity wins | No target name |
 
 </details>
