@@ -519,6 +519,7 @@ Quality and performance:
 | `-extra` | Use a 3 by 3 sample grid for each lightmap luxel and raise the bounce default to `12`. An explicit `-bounce` value takes precedence and `-fast` disables both effects | Off |
 | `-fast` | Use faster sample gathering while disabling bounce lighting and soft sky sampling | Off |
 | `-gpu` | Use approximate Vulkan compute for direct light gathering and scalar transfer form factors. Unsupported work falls back to the CPU | Off |
+| `-lightcull` | Skip faint direct-light contributions before shadow tracing; approximate and may alter lighting | Off |
 | `-bounce <n>` | Set the non-negative number of radiosity bounce passes. `-fast` forces the value to `0` | `8` or `12` with `-extra` |
 | `-chop <n>` | Set the base patch size for surfaces that are not accurate texlight emitters | `64` |
 | `-texchop <n>` | Set the base patch size for accurate texlight emitters | `32` |
@@ -552,6 +553,18 @@ Surface lighting:
 | `-smooth <n>` | Phong smoothing angle; default `50` |
 | `-smooth2 <n>` | Smoothing angle across texture seams |
 | `-blur <n>` | Lightmap blur; default `1.5` |
+| `-blurclamp <0..1>` | Reduce blur bleeding from brighter samples into shadows; default `0` |
+| `-pcf <1..8>` | Trace a rotated grid of shadow samples per axis; default `1` |
+| `-ao` | Enable ray-traced ambient occlusion; off by default |
+| `-aoscale <1..1024>` | Maximum AO ray length in map units; default `32` |
+| `-aogain <0.125..8>` | AO falloff exponent; default `1` |
+| `-aolevel <1..8>` | AO direction density; default `3` |
+| `-aominweight <0..0.1>` | Skip low-weight AO rays relative to the mean ray weight; default `0.045` |
+| `-aoopacity <0..8>` | AO strength; default `1` |
+| `-aocolor <r g b>` | AO tint; default `0 0 0` |
+| `-aomode <normal\|additive>` | Interpret the tint as displayed color or raw linear light; default `normal`. `0` and `1` are also accepted |
+| `-aostudio <inherit\|fast\|normal\|slow>` | Override studio model tracing for AO only; default `inherit`. Values `0..3` are also accepted |
+| `-aostats` | Report AO sample, ray and blocked-ray counts |
 | `-nolerp` | Disable sample triangulation |
 | `-softsky <value>` | Toggle soft skylight with `0` or `1`; default on |
 | `-noskyfix` | Disable the sky lighting fix |
@@ -564,6 +577,10 @@ Surface lighting:
 | `-texreflectgamma <n>` | Texture reflectivity gamma; default `1.76` |
 | `-texreflectscale <n>` | Texture reflectivity scale; default `0.7` |
 | `-depth <n>` | Translucent light depth; default `2.0` |
+
+AO, PCF with more than one tap, and light culling use the CPU direct-light
+gather even when `-gpu` is requested. Blur clamping is also available with
+GPU gathering. Existing preview quality presets leave these options disabled.
 
 Shadows, files and diagnostics:
 
@@ -911,9 +928,12 @@ Brushes may not mix incompatible contents. ORIGIN and BOUNDINGBOX brushes are in
 | `zhlt_minsmaxs` | Replaces brush model bounds after subtracting the entity origin | Bounds from compiled geometry |
 | `info_overview_point` | Makes the containing leaf see every visibility leaf | `reverse 0` |
 | `info_overview_point reverse 1` | Makes every visibility leaf see the containing leaf | `reverse 0` |
-| `info_portal target <name>` | Adds one way visibility from its containing leaf to the matching `info_leaf`. A missing named target produces a warning and no connection | No connection without a target |
+| `info_portal target <names>` | Links its containing leaf to named point or brush entities; separate multiple names with `;`. A missing target produces a warning and no connection | No connection without a target |
 | `info_portal neighbor <0..16>` | Also grants this target visibility to source leaves up to this many shortest portal hops away. Each connection has its own value, clamped to the range | `0` |
-| `info_leaf targetname <name>` | Supplies the destination leaf for matching `info_portal` entities. The last matching entity wins | No target name |
+| `info_portal targetneighbor <0..16>` | Expands the destination leaf cluster by this many portal hops | `0` |
+| `info_portal oneway <0\|1>` | Limit the link to the source-to-target direction when set to `1` | `1` for legacy single `info_leaf` links; otherwise `0` |
+| `info_portal reverse <0\|1>` | Remove the specified visibility instead of adding it | `0` |
+| `info_leaf targetname <name>` | Supplies a destination leaf for matching `info_portal` entities. For a legacy link with duplicate names, the last matching `info_leaf` wins | No target name |
 
 </details>
 

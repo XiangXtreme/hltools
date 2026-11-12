@@ -1,5 +1,14 @@
 # Third-party notices
 
+## SDHLT
+
+The compiler is a modified rewrite of [SDHLT](https://github.com/seedee/SDHLT).
+Lighting and portal features incorporate adaptations from SDHLT revision
+`d51cb01d0a70d1c7c4b3df3c53dc566a5e7e7011`. The upstream license and notices,
+including its stated Valve SDK and id Quake terms, are reproduced in the
+bundled `SDHLT-LICENSE.md` (in this source tree:
+`third_party/sdhlt/SDHLT-LICENSE.md`).
+
 ## sqlite3
 
 SQLite is in the public domain. The vendored amalgamation under

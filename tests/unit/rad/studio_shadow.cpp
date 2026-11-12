@@ -124,6 +124,20 @@ suite("unit.rad.studio_shadow")
                                                             point(20, 20, -10)));
     }
 
+    test("studio_shadow.AO can use a separate model tracing mode")
+    {
+        rad::rad_state state;
+        state.studio_models.push_back(make_model());
+        state.ao_studio_models.push_back(make_model());
+        state.ao_studio_models[0].trace_mode = 0;
+        const auto start = point(6, 6, 10);
+        const auto end = point(6, 6, -10);
+        expect_false(rad::test_segment_against_studio_list(state, start, end));
+        expect(rad::test_segment_against_studio_list(state, start, end, true));
+        state.ao_studio_models.clear();
+        expect_false(rad::test_segment_against_studio_list(state, start, end, true));
+    }
+
     test("studio_shadow.loads an env_static model from the game directory")
     {
         const std::filesystem::path root = test_support::scratch_directory("rad_studio_shadow");
@@ -167,6 +181,8 @@ suite("unit.rad.studio_shadow")
         rad::rad_state state;
         state.base_path = (root / "maps" / "shadow").string();
         state.options.studioshadow = true;
+        state.options.ao = true;
+        state.options.ao_studio_mode = 0;
         format::entity entity;
         entity.append("classname", "env_static");
         entity.append("model", "models/props/shadow.mdl");
@@ -175,12 +191,15 @@ suite("unit.rad.studio_shadow")
 
         rad::load_studio_models(state);
         require(state.num_studio_models == 1);
+        require(state.ao_studio_models.size() == 1);
+        expect(state.ao_studio_models[0].trace_mode == 0);
         expect(rad::test_segment_against_studio_model(state.studio_models[0], point(0, 0, 10),
                                                       point(0, 0, -10)));
 
         rad::free_studio_models(state);
         expect(state.num_studio_models == 0);
         expect(state.studio_models.empty());
+        expect(state.ao_studio_models.empty());
     }
 
     test("studio_shadow.slow mode blocks a segment through the facet")

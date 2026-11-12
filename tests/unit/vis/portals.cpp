@@ -145,6 +145,104 @@ suite("unit.vis.portals")
         }
     }
 
+    test("new portal targets support multiple entities and both neighbor clusters")
+    {
+        const std::string prt = write_portals("vis_multi_target");
+        threads::set_count(2);
+        auto portal = entity("info_portal", 4, "a; b");
+        portal.append("targetneighbor", "1");
+        auto a = entity("info_target", 0);
+        a.append("targetname", "a");
+        auto b = entity("light", 5);
+        b.append("targetname", "b");
+        for (bool fast : {false, true})
+        {
+            const auto result = calculate({portal, a, b}, fast, prt);
+            for (int target : {0, 1, 2, 5})
+            {
+                expect(sees(result, 4, target));
+                expect(sees(result, target, 4));
+            }
+            expect_false(sees(result, 4, 3));
+        }
+    }
+
+    test("portal oneway and reverse apply after normal visibility")
+    {
+        const std::string prt = write_portals("vis_reverse");
+        threads::set_count(2);
+        auto target = entity("info_target", 1);
+        target.append("targetname", "a");
+        auto portal = entity("info_portal", 0, "a");
+        portal.append("reverse", "1");
+        portal.append("oneway", "1");
+        for (bool fast : {false, true})
+        {
+            const auto baseline = calculate({target}, fast, prt);
+            const auto reversed = calculate({portal, target}, fast, prt);
+            expect(sees(baseline, 0, 1));
+            expect(sees(baseline, 1, 0));
+            expect_false(sees(reversed, 0, 1));
+            expect(sees(reversed, 1, 0));
+            expect(sees(reversed, 0, 0));
+        }
+    }
+
+    test("explicit oneway zero selects two-way behavior for an info_leaf")
+    {
+        const std::string prt = write_portals("vis_legacy_explicit");
+        threads::set_count(2);
+        auto portal = entity("info_portal", 4, "a");
+        portal.append("oneway", "0");
+        const auto result = calculate({portal, entity("info_leaf", 5, "a")}, true, prt);
+        expect(sees(result, 4, 5));
+        expect(sees(result, 5, 4));
+    }
+
+    test("legacy duplicate info_leaf names keep the last target")
+    {
+        const std::string prt = write_portals("vis_legacy_duplicate");
+        threads::set_count(2);
+        const auto portal = entity("info_portal", 6, "same");
+        const auto first = entity("info_leaf", 4, "same");
+        const auto last = entity("info_leaf", 5, "same");
+        const auto result = calculate({portal, first, last}, true, prt);
+        expect_false(sees(result, 6, 4));
+        expect(sees(result, 6, 5));
+        expect_false(sees(result, 5, 6));
+    }
+
+    test("a brush target contributes the leaves touched by its faces")
+    {
+        const std::string prt = write_portals("vis_brush_target");
+        threads::set_count(2);
+        auto target = entity("func_wall", 0);
+        target.append("targetname", "brush");
+        target.append("model", "*1");
+        auto map = map_for_entities({entity("info_portal", 6, "brush"), target});
+        map.models.resize(2);
+        map.models[1].firstface = 0;
+        map.models[1].numfaces = 1;
+        map.planes.resize(7);
+        map.planes[6].normal[1] = 1;
+        map.faces.resize(1);
+        map.faces[0].planenum = 6;
+        map.faces[0].numedges = 3;
+        map.vertexes = {{{40, 0, 0}}, {{50, 0, 0}}, {{40, 0, 5}}};
+        map.edges = {{{0, 1}}, {{1, 2}}, {{2, 0}}};
+        map.surfedges = {0, 1, 2};
+        vis::vis_options options;
+        options.portal_path = prt;
+        options.fast = true;
+        options.nofixprt = true;
+        vis::run_vis(map, options);
+        for (int leaf : {4, 5})
+        {
+            expect(sees(map, 6, leaf));
+            expect(sees(map, leaf, 6));
+        }
+    }
+
     test("entity links and overview points map through grouped BSP leaves")
     {
         const auto root = test_support::scratch_directory("vis_grouped_leaves");
