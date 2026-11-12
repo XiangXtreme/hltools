@@ -86,6 +86,22 @@ namespace
         return path;
     }
 
+    void set_map_display_name(const std::filesystem::path &path,
+                              const char *name)
+    {
+        database db;
+        require(sqlite3_open(path.string().c_str(), &db.handle) == SQLITE_OK);
+        sqlite3_stmt *statement = nullptr;
+        require(sqlite3_prepare_v2(
+                    db.handle,
+                    "UPDATE revisions SET display_name=? WHERE asset_id='am'",
+                    -1, &statement, nullptr) == SQLITE_OK);
+        require(sqlite3_bind_text(statement, 1, name, -1, SQLITE_TRANSIENT)
+                == SQLITE_OK);
+        require(sqlite3_step(statement) == SQLITE_DONE);
+        sqlite3_finalize(statement);
+    }
+
     void add_terrain_table(const std::filesystem::path &path, const char *row)
     {
         database db;
@@ -127,6 +143,22 @@ suite("unit.project.tbproject")
         require(project->find_texture("wall01") != nullptr);
         expect(project->find_texture("WALL01")->compatible
                == std::vector<byte>{'W', 'A', 'D', '3'});
+    }
+
+    test("project.finds_maps_with_utf8_display_names")
+    {
+        const auto path =
+            write_project(scratch_directory() / "unicode.tbproj", true);
+        set_map_display_name(path, u8"01 光照预览与编译");
+
+        std::string error;
+        const auto project =
+            format::tbproject::project::open(path.string(), &error);
+        require(project != nullptr);
+        const auto *map = project->find_map(u8"01 光照预览与编译");
+        require(map != nullptr);
+        expect(map->id == "am");
+        require(project->find_map("maps/alpha.map") != nullptr);
     }
 
     test("project.accepts_schema_two")
