@@ -149,13 +149,15 @@ suite("unit.project.tbproject")
     {
         const auto path =
             write_project(scratch_directory() / "unicode.tbproj", true);
-        set_map_display_name(path, u8"01 光照预览与编译");
+        const auto *map_name =
+            reinterpret_cast<const char *>(u8"01 光照预览与编译");
+        set_map_display_name(path, map_name);
 
         std::string error;
         const auto project =
             format::tbproject::project::open(path.string(), &error);
         require(project != nullptr);
-        const auto *map = project->find_map(u8"01 光照预览与编译");
+        const auto *map = project->find_map(map_name);
         require(map != nullptr);
         expect(map->id == "am");
         require(project->find_map("maps/alpha.map") != nullptr);
