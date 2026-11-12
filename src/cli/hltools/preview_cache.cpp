@@ -43,21 +43,26 @@ namespace tools
                                 &point[0], &point[1], &point[2]) != 3
                     || !std::isfinite(point[0]) || !std::isfinite(point[1])
                     || !std::isfinite(point[2])) return false;
-                int node = map.models[0].headnode[0];
-                std::size_t budget = map.nodes.size() + 1;
-                while (node >= 0 && budget--)
+                // BSP uses origin + 1 for outside filling and both +/- 1 for
+                // inside filling. All probes must stay in existing empty space.
+                for (float offset : {-1.0f, 0.0f, 1.0f})
                 {
-                    if ((std::size_t)node >= map.nodes.size()) return false;
-                    const auto &n = map.nodes[(std::size_t)node];
-                    if ((std::size_t)n.planenum >= map.planes.size()) return false;
-                    const auto &p = map.planes[(std::size_t)n.planenum];
-                    const float d = (point[0] * p.normal[0] + point[1] * p.normal[1])
-                        + point[2] * p.normal[2] - p.dist;
-                    node = n.children[d >= 0 ? 0 : 1];
+                    int node = map.models[0].headnode[0];
+                    std::size_t budget = map.nodes.size() + 1;
+                    while (node >= 0 && budget--)
+                    {
+                        if ((std::size_t)node >= map.nodes.size()) return false;
+                        const auto &n = map.nodes[(std::size_t)node];
+                        if ((std::size_t)n.planenum >= map.planes.size()) return false;
+                        const auto &p = map.planes[(std::size_t)n.planenum];
+                        const float d = (point[0] * p.normal[0] + point[1] * p.normal[1])
+                            + (point[2] + offset) * p.normal[2] - p.dist;
+                        node = n.children[d >= 0 ? 0 : 1];
+                    }
+                    const int leaf = -node - 1;
+                    if (node >= 0 || leaf < 0 || (std::size_t)leaf >= map.leafs.size()
+                        || map.leafs[(std::size_t)leaf].contents != -1) return false;
                 }
-                const int leaf = -node - 1;
-                if (node >= 0 || leaf < 0 || (std::size_t)leaf >= map.leafs.size()
-                    || map.leafs[(std::size_t)leaf].contents != -1) return false;
             }
             return true;
         }

@@ -88,6 +88,8 @@ def verify_preview_cache(worker, directory, gpu=False):
     check_edit(original, False)
     check_edit(original.replace("255 210 150 300", "120 180 255 500"), True)
     check_edit(original.replace('"0 0 80"', '"24 0 70"'), True)
+    # A raw origin can be empty while the BSP origin+1 occupant probe is solid.
+    check_edit(original.replace('"0 0 80"', '"0 0 127.5"'), False)
     check_edit(original.replace('"0 0 40"', '"10 0 40"'), False)
     check_edit(original.replace("WALL 0 0 0 1 1", "WALL 8 0 0 1 1", 1), False)
     check_edit(original, False)
