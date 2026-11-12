@@ -32,6 +32,11 @@ suite("unit.cli.compile_parameters")
         expect(!cli::option_applies_to(
             cli::compiler_stage::csg, "-onlyents", true));
 
+        const cli::option_spec *preview_fast_vis = cli::find_option_spec("-previewfastvis");
+        require(preview_fast_vis != nullptr);
+        expect(preview_fast_vis->arity == 0);
+        expect(!preview_fast_vis->persist);
+
         const cli::option_spec *deepclip = cli::find_option_spec("-deepclip");
         require(deepclip != nullptr);
         expect(deepclip->arity == 0);
