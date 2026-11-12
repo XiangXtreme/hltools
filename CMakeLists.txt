@@ -462,6 +462,7 @@ endif()
 add_executable(hltools
     src/cli/hltools/main.cpp
     src/cli/hltools/compile.cpp
+    src/cli/hltools/preview_cache.cpp
     src/cli/hltools/project_input.cpp
     src/cli/tools/csg_tool.cpp
     src/cli/tools/csg_options.cpp
