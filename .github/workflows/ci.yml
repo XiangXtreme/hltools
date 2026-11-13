@@ -47,12 +47,14 @@ jobs:
             generator: Unix Makefiles
             shader_platform: linux-x86_64
             shader_compiler: glslc
+            worker_target: HltoolsLightmapWorker
             unified_archive: hltools-linux-x64.tar.gz
           - name: windows
             os: windows-2022
             generator: Visual Studio 17 2022
             shader_platform: windows-x86_64
             shader_compiler: glslc.exe
+            worker_target: src/preview/HltoolsLightmapWorker
             unified_archive: hltools-windows-x64.zip
 
     steps:
@@ -81,6 +83,9 @@ jobs:
 
       - name: Build
         run: cmake --build build --config Release --parallel
+
+      - name: Build lightmap worker
+        run: cmake --build build --config Release --target ${{ matrix.worker_target }} --parallel
 
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
