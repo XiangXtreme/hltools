@@ -90,7 +90,9 @@ test("write_bsp preserves direct surface collision across the large tree boundar
                                      {0, 0, -31},
                                      {0, 0, 61}})
             {
-                capture(point.x, point.y, point.z);
+                capture(point.x);
+                capture(point.y);
+                capture(point.z);
                 const int expected =
                     point == math::vec3v{0, 0, 0} ? bsp::contents_solid : bsp::contents_empty;
                 expect(engine_contents(map, map.models[1].headnode[hull], point) == expected);
