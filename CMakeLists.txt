@@ -6,7 +6,7 @@ cmake_minimum_required(VERSION 3.21)
 
 project(hltools
     DESCRIPTION "goldsrc map and asset toolchain"
-    LANGUAGES CXX
+    LANGUAGES C CXX
 )
 
 include(CTest)
